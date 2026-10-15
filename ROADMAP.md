@@ -132,6 +132,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-15 | `insert.pictures`: a batch of cell pictures (WPS 批量插入图片), read and validated before the workbook changes so a bad file never leaves half a batch applied; `paths` + `column` fills a column, `pictures` entries carry their own destination |
 | 2026-10-15 | Data tools from WPS's paid tier: Compare Ranges, Split by Column, Merge Sheets, Create Index, Invert Selection, Fill Blanks, Insert Text into Cells, Rank, Conditional Statistics, Quick Filter. Save As CSV writes General numbers at full precision, so a 12-digit number no longer round-trips as `1.24412E+11` |
 | 2026-10-11 | Command-sequence fuzzing: random command sequences checked against undo/redo, XLSX round-trip and full recalculation; fixes for the table, legacy-array, spill, AutoSum, Watch Window and sheet-copy bugs it found |
 | 2026-10-11 | Password-protected workbooks open: GridCraft asks for the password and decrypts Agile and Standard encryption (#11) |

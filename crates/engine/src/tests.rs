@@ -1109,6 +1109,22 @@ fn create_index_lists_every_sheet_with_a_link() {
 }
 
 #[test]
+fn insert_pictures_places_a_batch_into_cells() {
+    // A 1×1 PNG.
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    let mut s = s();
+    let r = s.execute("insert.pictures", json!({"pictures": [{"base64": PNG, "at": "B2"}, {"base64": PNG, "at": "B3"}]})).unwrap();
+    assert_eq!(r["inserted"], 2);
+    assert_eq!(r["cells"][0], "B2");
+    // Without `at` the batch steps down from the active cell.
+    s.execute("selection.set", json!({"range": "D5"})).unwrap();
+    let r = s.execute("insert.pictures", json!({"pictures": [{"base64": PNG}, {"base64": PNG}]})).unwrap();
+    assert_eq!(r["cells"][1], "D6");
+    // A file that is not a PNG or JPEG is refused before anything is inserted.
+    assert!(s.execute("insert.pictures", json!({"pictures": [{"base64": "aGVsbG8="}]})).is_err());
+}
+
+#[test]
 fn invert_selection_selects_what_the_selection_does_not_cover() {
     let mut s = s();
     s.execute("range.setValues", json!({"range": "A1", "values": [[1, 2, 3]]})).unwrap();

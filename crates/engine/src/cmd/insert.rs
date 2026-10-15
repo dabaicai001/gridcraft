@@ -115,6 +115,15 @@ pub fn specs() -> Vec<CommandSpec> {
             insert_picture
         ),
         cmd!(
+            "insert.pictures",
+            "Pictures into Cells…",
+            ["Insert", "Illustrations"],
+            None,
+            "{pictures: [{path|base64, at?: \"B2\", alt?}] | paths: [\"a.png\", ..], column?: \"B\", startRow?: 2} — a batch of cell pictures; without `at` they step down from the active cell",
+            has_doc,
+            insert_pictures
+        ),
+        cmd!(
             "insert.shape",
             "Shapes",
             ["Insert", "Illustrations"],
@@ -962,6 +971,73 @@ fn insert_picture(s: &mut Session, p: &Json) -> Result<Json> {
         cx.sheet_mut(sheet)?.images.push(img);
         Ok(json!({"image": id}))
     })
+}
+
+/// The bytes of one `pictures` entry: a `path` on disk or inline `base64`.
+fn picture_bytes(entry: &Json) -> Result<Vec<u8>> {
+    if let Some(b) = entry.get("base64").and_then(Json::as_str) {
+        crate::io::base64_decode(b).ok_or_else(|| bad("insert.pictures", "invalid base64"))
+    } else if let Some(path) = entry.get("path").and_then(Json::as_str) {
+        crate::io::read_file(path)
+    } else {
+        Err(bad("insert.pictures", "each picture needs a `path` or `base64`"))
+    }
+}
+
+/// Inserts a batch of cell pictures (WPS 批量插入图片). Every picture is read and validated
+/// before the workbook changes, so a bad file never leaves half a batch applied.
+fn insert_pictures(s: &mut Session, p: &Json) -> Result<Json> {
+    const CMD: &str = "insert.pictures";
+    let mut items: Vec<(Vec<u8>, &'static str, String, Option<String>)> = Vec::new();
+    match (p.get("pictures"), p.get("paths")) {
+        (Some(Json::Array(list)), _) => {
+            for entry in list {
+                let data = picture_bytes(entry)?;
+                let mime = validate_cell_picture(&data)?;
+                let alt = str_param(entry, "alt").unwrap_or("").to_string();
+                items.push((data, mime, alt, str_param(entry, "at").map(str::to_string)));
+            }
+        }
+        (_, Some(Json::Array(list))) => {
+            let col = str_param(p, "column").and_then(gridcraft_core::letters_to_col).ok_or_else(|| bad(CMD, "missing `column`"))?;
+            let mut row = f64_param(p, "startRow").map(|n| n.max(1.0) as u32).unwrap_or(1);
+            for entry in list {
+                let path = entry.as_str().ok_or_else(|| bad(CMD, "`paths` must hold picture paths"))?;
+                let data = crate::io::read_file(path)?;
+                let mime = validate_cell_picture(&data)?;
+                items.push((data, mime, String::new(), Some(CellRef::new(row - 1, col).a1())));
+                row = row.saturating_add(1);
+            }
+        }
+        _ => return Err(bad(CMD, "missing `pictures` or `paths`")),
+    }
+    if items.is_empty() {
+        return Err(bad(CMD, "no pictures to insert"));
+    }
+    if items.len() > 10_000 {
+        return Err(bad(CMD, "too many pictures in one batch"));
+    }
+    let sheet = target_sheet(s, p)?;
+    let mut cursor = s.doc()?.selection.active;
+    let placed = edit(s, |cx| {
+        let mut placed: Vec<String> = Vec::new();
+        for (data, mime, alt, at) in items {
+            let at = match at.as_deref().and_then(CellRef::parse) {
+                Some(a) => a,
+                None => {
+                    let a = cursor;
+                    cursor.row = cursor.row.saturating_add(1);
+                    a
+                }
+            };
+            let picture = CellPicture { data, mime: mime.into(), alt };
+            cx.sheet_mut(sheet)?.set_picture(at, std::sync::Arc::new(picture));
+            cx.touch(sheet, at);
+            placed.push(at.a1());
+        }
+        Ok(placed)
+    })?;
+    Ok(json!({"inserted": placed.len(), "cells": placed}))
 }
 
 /// Validate before mutating the workbook; header dimensions alone do not prove the pixels decode.
