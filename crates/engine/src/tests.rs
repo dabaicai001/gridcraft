@@ -978,6 +978,149 @@ fn remove_duplicates_compares_shown_text() {
 }
 
 #[test]
+fn fill_blanks_carries_the_value_above_down_the_range() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["a"], ["b"]]})).unwrap();
+    // A3:A5 are empty: they take the value above and it carries down, as Ctrl+D would.
+    let r = s.execute("edit.fillBlanks", json!({"range": "A1:A5"})).unwrap();
+    assert_eq!(r["filled"], 3);
+    assert_eq!((v(&s, "A3"), v(&s, "A4"), v(&s, "A5")), (Value::from("b"), Value::from("b"), Value::from("b")));
+    // A literal (parsed as a number) and zero fill the whole range.
+    let r = s.execute("edit.fillBlanks", json!({"range": "B1:B5", "from": "value", "value": "7"})).unwrap();
+    assert_eq!(r["filled"], 5);
+    assert_eq!(v(&s, "B1"), Value::Number(7.0));
+    let r = s.execute("edit.fillBlanks", json!({"range": "C1:C5", "from": "zero"})).unwrap();
+    assert_eq!(r["filled"], 5);
+    assert_eq!(v(&s, "C1"), Value::Number(0.0));
+}
+
+#[test]
+fn insert_text_batch_inserts_at_the_start_the_end_or_a_position() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["ab"], ["cd"]]})).unwrap();
+    let r = s.execute("edit.insertTextBatch", json!({"range": "A1:A2", "text": "x"})).unwrap();
+    assert_eq!(r["updated"], 2);
+    assert_eq!((v(&s, "A1"), v(&s, "A2")), (Value::from("xab"), Value::from("xcd")));
+    s.execute("edit.insertTextBatch", json!({"range": "A1:A2", "text": "-", "at": "end"})).unwrap();
+    assert_eq!((v(&s, "A1"), v(&s, "A2")), (Value::from("xab-"), Value::from("xcd-")));
+    // Position is 1-based: 2 puts the text after the first character.
+    s.execute("edit.insertTextBatch", json!({"range": "A1:A2", "text": "|", "at": "position", "position": 2})).unwrap();
+    assert_eq!((v(&s, "A1"), v(&s, "A2")), (Value::from("x|ab-"), Value::from("x|cd-")));
+    // A formula's text is a computed result: the formula is left alone.
+    s.execute("cell.set", json!({"cell": "B1", "input": "=1+1"})).unwrap();
+    let r = s.execute("edit.insertTextBatch", json!({"range": "B1", "text": "x"})).unwrap();
+    assert_eq!(r["updated"], 0);
+    assert_eq!(v(&s, "B1"), Value::Number(2.0));
+}
+
+#[test]
+fn rank_entry_writes_ranks_and_tied_values_share_one() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [[30], [10], [30], [20]]})).unwrap();
+    let r = s.execute("data.rankEntry", json!({"range": "A1:A4", "destination": "B1"})).unwrap();
+    assert_eq!(r["ranked"], 4);
+    assert_eq!(
+        (v(&s, "B1"), v(&s, "B2"), v(&s, "B3"), v(&s, "B4")),
+        (Value::Number(1.0), Value::Number(4.0), Value::Number(1.0), Value::Number(3.0))
+    );
+    // RANK.AVG averages the tie; ascending order ranks the smallest first.
+    s.execute("data.rankEntry", json!({"range": "A1:A4", "destination": "C1", "ties": "average"})).unwrap();
+    assert_eq!(v(&s, "C1"), Value::Number(1.5));
+    s.execute("data.rankEntry", json!({"range": "A1:A4", "destination": "D1", "order": "asc"})).unwrap();
+    assert_eq!(v(&s, "D2"), Value::Number(1.0));
+}
+
+#[test]
+fn conditional_statistics_counts_and_sums_the_matching_cells() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [[5], [15], [25]]})).unwrap();
+    let r = s.execute("data.conditionalStatistics", json!({"range": "A1:A3", "criteria": {"op": ">=", "value": "15"}})).unwrap();
+    assert_eq!(r["matched"], 2);
+    assert_eq!(r["value"], 2.0);
+    // `statRange` supplies the values the sum runs over; `destination` writes the result.
+    let r = s
+        .execute(
+            "data.conditionalStatistics",
+            json!({"range": "A1:A3", "criteria": {"op": ">=", "value": "15"}, "function": "sum", "destination": "C1"}),
+        )
+        .unwrap();
+    assert_eq!(r["value"], 40.0);
+    assert_eq!(v(&s, "C1"), Value::Number(40.0));
+}
+
+#[test]
+fn quick_filter_filters_the_active_column_by_the_active_cell() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["k"], ["a"], ["b"], ["a"]]})).unwrap();
+    s.execute("selection.set", json!({"range": "A2"})).unwrap();
+    let r = s.execute("data.quickFilter", json!({})).unwrap();
+    // Only the "b" row is hidden; the header and both "a" rows stay.
+    assert_eq!(r["hiddenRows"], 1);
+    assert!(s.execute("data.quickFilter", json!({"by": "top", "count": 1})).is_ok());
+}
+
+#[test]
+fn compare_ranges_reports_the_differing_cells() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [[1, 2], [3, 4]]})).unwrap();
+    s.execute("range.setValues", json!({"range": "D1", "values": [[1, 9], [3, 4]]})).unwrap();
+    let r = s.execute("data.compareRanges", json!({"range": "A1:B2", "with": "D1:E2"})).unwrap();
+    assert_eq!(r["differences"], 1);
+    assert_eq!(r["cells"][0]["left"], "2");
+    assert_eq!(r["cells"][0]["right"], "9");
+    // Two ranges of different shapes cannot be compared.
+    assert!(s.execute("data.compareRanges", json!({"range": "A1:B2", "with": "D1:E3"})).is_err());
+}
+
+#[test]
+fn split_by_column_writes_one_sheet_per_value() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["k", "v"], ["a", 1], ["b", 2], ["a", 3]]})).unwrap();
+    let r = s.execute("data.splitByColumn", json!({"range": "A1:B4", "column": "A"})).unwrap();
+    let sheets = r["sheets"].as_array().cloned().unwrap_or_default();
+    assert_eq!(sheets.len(), 2);
+    assert_eq!(sheets.iter().find(|x| x["sheet"] == "a").and_then(|x| x["rows"].as_u64()), Some(2));
+    assert_eq!(sheets.iter().find(|x| x["sheet"] == "b").and_then(|x| x["rows"].as_u64()), Some(1));
+    // The last sheet created is active: it carries the header and only its own row.
+    assert_eq!(v(&s, "A1"), Value::from("k"));
+    assert_eq!(v(&s, "B2"), Value::Number(2.0));
+}
+
+#[test]
+fn merge_sheets_appends_the_other_sheets_rows() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["h"], [1]]})).unwrap();
+    s.execute("home.insertSheet", json!({"name": "Two"})).unwrap();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["h"], [2]]})).unwrap();
+    // Sheet1's header is skipped, its one row lands below Two's used range.
+    let r = s.execute("data.mergeSheets", json!({"sheets": ["Sheet1"]})).unwrap();
+    assert_eq!(r["appended"], 1);
+    assert_eq!(v(&s, "A3"), Value::Number(1.0));
+}
+
+#[test]
+fn create_index_lists_every_sheet_with_a_link() {
+    let mut s = s();
+    s.execute("home.insertSheet", json!({"name": "Two"})).unwrap();
+    let r = s.execute("data.createIndex", json!({})).unwrap();
+    assert_eq!(r["links"], 2);
+    // The index sheet is active and names both sheets in order.
+    assert_eq!((v(&s, "A1"), v(&s, "A2")), (Value::from("Sheet1"), Value::from("Two")));
+}
+
+#[test]
+fn invert_selection_selects_what_the_selection_does_not_cover() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [[1, 2, 3]]})).unwrap();
+    s.execute("selection.set", json!({"range": "B1"})).unwrap();
+    let r = s.execute("selection.invert", json!({"range": "A1:C1"})).unwrap();
+    assert_eq!(r["ranges"], 2);
+    // Inverting a range the selection already covers has nothing left to select.
+    s.execute("selection.set", json!({"range": "A1:C1"})).unwrap();
+    assert!(s.execute("selection.invert", json!({"range": "A1:C1"})).is_err());
+}
+
+#[test]
 fn formatting_and_styles() {
     let mut s = s();
     s.execute("selection.set", json!({"range": "A1:B2"})).unwrap();

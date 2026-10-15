@@ -106,6 +106,20 @@ pub fn value_text(wb: &Workbook, sheet: &Sheet, c: CellRef) -> String {
     }
 }
 
+/// The text Save As CSV/Text writes for `c`: [`value_text`], except that a General number is
+/// written at full precision. The grid spells a 12-digit number `1.24412E+11`, and a CSV
+/// that kept that spelling would not read back as the same number, so it is exported the way
+/// Excel exports it — up to 15 significant digits.
+pub fn csv_value_text(wb: &Workbook, sheet: &Sheet, c: CellRef) -> String {
+    if let Value::Number(n) = sheet.value(c) {
+        let code = wb.styles.get(sheet.style_id(c)).num_fmt.as_str();
+        if parsed(code).is_general() {
+            return gridcraft_core::number_to_text(n);
+        }
+    }
+    value_text(wb, sheet, c)
+}
+
 /// Tab-separated text of a range, as the system clipboard gets it.
 pub fn range_text(wb: &Workbook, sheet: usize, r: RangeRef) -> String {
     let Some(sh) = wb.sheet(sheet) else { return String::new() };

@@ -174,8 +174,10 @@ pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
 /// Save As CSV/Text writes "the text and values as they are displayed in cells" with "all
 /// characters in each cell" (Microsoft Support, *Excel formatting and features that are not
 /// transferred to other file formats*): number formats applied, never column-width `#####`.
+/// A General number is the exception and is written at full precision (see
+/// [`crate::display::csv_value_text`]).
 fn csv(wb: &Workbook, sh: &Sheet, delimiter: u8) -> Vec<u8> {
-    gridcraft_xlsx::write_csv(sh, delimiter, |c| crate::display::value_text(wb, sh, c))
+    gridcraft_xlsx::write_csv(sh, delimiter, |c| crate::display::csv_value_text(wb, sh, c))
 }
 
 fn esc(s: &str) -> String {

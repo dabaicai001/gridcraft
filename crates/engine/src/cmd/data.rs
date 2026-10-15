@@ -65,6 +65,69 @@ pub fn specs() -> Vec<CommandSpec> {
             text_to_columns
         ),
         cmd!(
+            "data.rankEntry",
+            "Rank…",
+            ["Data", "Data Tools"],
+            None,
+            "{range?, destination?: \"C2\", order?: desc|asc, ties?: min|average|max} — writes each value's rank into the range, or next to it at `destination` (RANK.EQ by default)",
+            has_doc,
+            rank_entry
+        ),
+        cmd!(
+            "data.conditionalStatistics",
+            "Conditional Statistics…",
+            ["Data", "Data Tools"],
+            None,
+            "{range?, criteria?: {op: \">\", value: \"10\"}, statRange?, function?: count|sum|average|max|min, destination?: \"F1\"} — the statistic over the cells meeting the criterion (`statRange` supplies the values, same shape as `range`)",
+            has_doc,
+            conditional_statistics
+        ),
+        cmd!(
+            "data.quickFilter",
+            "Quick Filter",
+            ["Data", "Sort & Filter"],
+            None,
+            "{by?: value|top|contains, count?: 10, bottom?: bool, percent?: bool} — filters the active column by the active cell's value, or its top N",
+            has_doc,
+            quick_filter
+        ),
+        cmd!(
+            "data.compareRanges",
+            "Compare Ranges…",
+            ["Data", "Data Tools"],
+            None,
+            "{range, with, highlight?: bool} — reports every cell that differs between the two ranges (same shape), optionally highlighting them",
+            has_doc,
+            compare_ranges
+        ),
+        cmd!(
+            "data.splitByColumn",
+            "Split by Column…",
+            ["Data", "Data Tools"],
+            None,
+            "{range?, column: \"A\", header?: bool} — writes the rows into one new sheet per distinct value of `column`",
+            has_doc,
+            split_by_column
+        ),
+        cmd!(
+            "data.mergeSheets",
+            "Merge Sheets…",
+            ["Data", "Data Tools"],
+            None,
+            "{sheets?: [\"Sheet2\", ..], destination?: \"A1\"} — appends the rows of the listed sheets (default: every other sheet) below the active one",
+            has_doc,
+            merge_sheets
+        ),
+        cmd!(
+            "data.createIndex",
+            "Create Index",
+            ["Data", "Data Tools"],
+            None,
+            "{name?: \"Index\"} — a new sheet listing every sheet with a link to it",
+            has_doc,
+            create_index
+        ),
+        cmd!(
             "data.validation",
             "Data Validation…",
             ["Data", "Data Tools"],
@@ -828,6 +891,360 @@ fn text_to_columns(s: &mut Session, p: &Json) -> Result<Json> {
         Ok(())
     })?;
     ok()
+}
+
+/// Writes each value's rank into the range, or next to it at `destination`. Ranking is
+/// RANK.EQ by default (every tied value shares the group's best rank); `average` gives
+/// RANK.AVG and `max` the group's worst rank.
+fn rank_entry(s: &mut Session, p: &Json) -> Result<Json> {
+    let sheet = target_sheet(s, p)?;
+    let r = target_range(s, p)?;
+    if r.count() > 1_000_000 {
+        return Err(bad("data.rankEntry", "range too large"));
+    }
+    let order = str_param(p, "order").unwrap_or("desc").to_string();
+    let ties = str_param(p, "ties").unwrap_or("min").to_string();
+    let dest = cell_param_on(s, p, "destination", sheet)?.unwrap_or(r.start);
+    let ranked = edit(s, |cx| {
+        let Some(sh) = cx.wb.sheet(sheet) else { return Ok(0u32) };
+        let cells: Vec<CellRef> = r.iter().collect();
+        // Only numbers take part; anything else keeps its cell.
+        let nums: Vec<(usize, f64)> = cells.iter().enumerate().filter_map(|(i, c)| sh.value(*c).as_f64().map(|n| (i, n))).collect();
+        // Best first, then one rank per tie group.
+        let mut sorted: Vec<usize> = (0..nums.len()).collect();
+        sorted.sort_by(|&a, &b| {
+            let (x, y) = (nums[a].1, nums[b].1);
+            if order == "asc" { x.partial_cmp(&y) } else { y.partial_cmp(&x) }.unwrap_or(Ordering::Equal)
+        });
+        let mut rank_of = vec![0f64; nums.len()];
+        let mut i = 0;
+        while i < sorted.len() {
+            let mut j = i;
+            while j + 1 < sorted.len() && nums[sorted[j + 1]].1 == nums[sorted[i]].1 {
+                j += 1;
+            }
+            let first = i as f64 + 1.0;
+            let last = j as f64 + 1.0;
+            for k in i..=j {
+                rank_of[sorted[k]] = match ties.as_str() {
+                    "max" => last,
+                    "average" => (first + last) / 2.0,
+                    _ => first,
+                };
+            }
+            i = j + 1;
+        }
+        let width = r.width();
+        let mut n = 0u32;
+        for (slot, rank) in rank_of.into_iter().enumerate() {
+            let cell_index = nums[slot].0 as u32;
+            let at = CellRef::new(dest.row + cell_index / width, dest.col + cell_index % width);
+            let shm = cx.sheet_mut(sheet)?;
+            shm.set_value(at, Value::number(rank));
+            cx.changed.push((sheet, at));
+            n += 1;
+        }
+        Ok(n)
+    })?;
+    Ok(json!({"ranked": ranked}))
+}
+
+/// The statistic over the cells meeting a criterion: `range` holds what the criterion tests,
+/// `statRange` (same shape) the values it is computed over, and `function` picks which.
+fn conditional_statistics(s: &mut Session, p: &Json) -> Result<Json> {
+    let sheet = target_sheet(s, p)?;
+    let r = data_range(s, p)?;
+    let function = str_param(p, "function").unwrap_or("count").to_string();
+    let crit = p.get("criteria");
+    let op = crit.and_then(|c| c.get("op")).and_then(Json::as_str).unwrap_or("=").to_string();
+    let value = crit.and_then(|c| c.get("value")).map(super::edit::json_to_input).unwrap_or_default();
+    // Without `statRange` the criterion's own cells carry the values.
+    let (stat_range, separate) = match str_param(p, "statRange").and_then(RangeRef::parse) {
+        Some(x) => (x, true),
+        None => (r, false),
+    };
+    if separate && stat_range.count() != r.count() {
+        return Err(bad("data.conditionalStatistics", "`statRange` must have the same shape as `range`"));
+    }
+    let dest = cell_param_on(s, p, "destination", sheet)?;
+    let d = s.doc()?;
+    let wb = &d.wb;
+    let sh = wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
+    let mut matched = 0usize;
+    let mut nums: Vec<f64> = Vec::new();
+    for (i, c) in r.iter().enumerate() {
+        let v = sh.value(c);
+        let text = crate::display::cell_text(wb, sh, c);
+        if !custom_ok(&v, &text, &op, &value) {
+            continue;
+        }
+        matched += 1;
+        let at = if separate { stat_range.iter().nth(i) } else { Some(c) };
+        if let Some(at) = at
+            && let Some(n) = sh.value(at).as_f64()
+        {
+            nums.push(n);
+        }
+    }
+    let value = match function.as_str() {
+        "sum" => nums.iter().sum(),
+        "average" => nums.iter().sum::<f64>() / nums.len().max(1) as f64,
+        "max" => nums.iter().copied().fold(0.0, f64::max),
+        "min" => nums.iter().copied().fold(0.0, f64::min),
+        _ => matched as f64,
+    };
+    if let Some(at) = dest {
+        edit(s, |cx| {
+            let shm = cx.sheet_mut(sheet)?;
+            shm.set_value(at, Value::number(value));
+            cx.changed.push((sheet, at));
+            Ok(())
+        })?;
+    }
+    Ok(json!({"value": value, "matched": matched}))
+}
+
+/// Filters the active column by the active cell's value, or its top N: the one-click filter
+/// of the cell you are on. The column must sit inside the filter range.
+fn quick_filter(s: &mut Session, p: &Json) -> Result<Json> {
+    let by = str_param(p, "by").unwrap_or("value").to_string();
+    let sheet = s.doc()?.wb.active_sheet;
+    let active = s.doc()?.selection.active;
+    if s.doc()?.wb.sheet(sheet).and_then(|sh| sh.autofilter.clone()).is_none() {
+        toggle_filter(s, &json!({}))?;
+    }
+    let af = s.doc()?.wb.sheet(sheet).and_then(|sh| sh.autofilter.clone()).ok_or_else(|| EngineError::Other("no filter".into()))?;
+    let off = active.col.checked_sub(af.range.start.col).ok_or_else(|| bad("data.quickFilter", "the active cell is left of the filter range"))?;
+    if active.col > af.range.end.col {
+        return Err(bad("data.quickFilter", "the active cell is right of the filter range"));
+    }
+    let mut params = json!({"column": off});
+    match by.as_str() {
+        "top" => {
+            params["top"] = json!({
+                "count": f64_param(p, "count").unwrap_or(10.0) as u32,
+                "bottom": bool_param(p, "bottom").unwrap_or(false),
+                "percent": bool_param(p, "percent").unwrap_or(false),
+            });
+        }
+        _ => {
+            let text = {
+                let d = s.doc()?;
+                let sh = d.wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
+                crate::display::cell_text(&d.wb, sh, active)
+            };
+            if by == "contains" {
+                params["custom"] = json!({"op": "=", "value": format!("*{text}*")});
+            } else {
+                params["values"] = json!([text]);
+            }
+        }
+    }
+    s.execute("data.filterBy", params)
+}
+
+/// A sheet name Excel accepts for a split key: the forbidden characters removed, trimmed to
+/// 31 characters, never empty.
+fn sheet_name_for(key: &str) -> String {
+    let cleaned: String = key.chars().filter(|c| !matches!(c, ':' | '\\' | '/' | '?' | '*' | '[' | ']')).collect();
+    let trimmed: String = cleaned.chars().take(31).collect();
+    if trimmed.is_empty() { "Sheet".into() } else { trimmed }
+}
+
+/// Compares two ranges of the same shape cell by cell and reports the differences, optionally
+/// highlighting them.
+fn compare_ranges(s: &mut Session, p: &Json) -> Result<Json> {
+    const CMD: &str = "data.compareRanges";
+    let sheet = target_sheet(s, p)?;
+    let a = str_param(p, "range").and_then(RangeRef::parse).ok_or_else(|| bad(CMD, "missing `range`"))?;
+    let b = str_param(p, "with").and_then(RangeRef::parse).ok_or_else(|| bad(CMD, "missing `with`"))?;
+    if a.count() != b.count() {
+        return Err(bad(CMD, "the two ranges must have the same shape"));
+    }
+    let (diffs, painted) = {
+        let d = s.doc()?;
+        let wb = &d.wb;
+        let sh = wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
+        let mut diffs: Vec<Json> = Vec::new();
+        let mut painted: Vec<String> = Vec::new();
+        for (x, y) in a.iter().zip(b.iter()) {
+            let left = crate::display::cell_text(wb, sh, x);
+            let right = crate::display::cell_text(wb, sh, y);
+            if left != right {
+                diffs.push(json!({"cell": x.a1(), "other": y.a1(), "left": left, "right": right}));
+                if painted.len() < 1000 {
+                    painted.push(x.a1());
+                    painted.push(y.a1());
+                }
+            }
+        }
+        (diffs, painted)
+    };
+    for r in painted {
+        s.execute("home.fillColor", json!({"range": r, "color": "#FFF2CC"}))?;
+    }
+    Ok(json!({"differences": diffs.len(), "cells": diffs}))
+}
+
+/// Splits the range's rows into one new sheet per distinct value of `column`.
+fn split_by_column(s: &mut Session, p: &Json) -> Result<Json> {
+    const CMD: &str = "data.splitByColumn";
+    let sheet = target_sheet(s, p)?;
+    let r = data_range(s, p)?;
+    let header = bool_param(p, "header").unwrap_or(true);
+    let col = col_param(p.get("column"), r.start.col).ok_or_else(|| bad(CMD, "missing `column`"))?;
+    if col < r.start.col || col > r.end.col {
+        return Err(bad(CMD, "column outside the range"));
+    }
+    let first = r.start.row + header as u32;
+    let (head, groups) = {
+        let d = s.doc()?;
+        let wb = &d.wb;
+        let sh = wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
+        let head: Vec<Option<Cell>> = (r.start.col..=r.end.col).map(|c| sh.cell(CellRef::new(r.start.row, c)).cloned()).collect();
+        let mut groups: Vec<(String, Vec<Vec<Option<Cell>>>)> = Vec::new();
+        for row in first..=r.end.row {
+            let key = crate::display::cell_text(wb, sh, CellRef::new(row, col));
+            let cells: Vec<Option<Cell>> = (r.start.col..=r.end.col).map(|c| sh.cell(CellRef::new(row, c)).cloned()).collect();
+            match groups.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, rows)) => rows.push(cells),
+                None => groups.push((key, vec![cells])),
+            }
+        }
+        (head, groups)
+    };
+    let mut used: Vec<String> = Vec::new();
+    let mut made: Vec<Json> = Vec::new();
+    for (key, rows) in groups {
+        let mut name = sheet_name_for(&key);
+        if used.contains(&name) {
+            let mut n = 2u32;
+            while n < 1000 {
+                let keep = 31 - format!("{n}").len();
+                let candidate = format!("{}{n}", name.chars().take(keep).collect::<String>());
+                if !used.contains(&candidate) {
+                    name = candidate;
+                    break;
+                }
+                n += 1;
+            }
+            if used.contains(&name) {
+                return Err(bad(CMD, "too many sheets share one split value"));
+            }
+        }
+        used.push(name.clone());
+        let idx = s.execute("home.insertSheet", json!({"name": name}))?["index"].as_u64().unwrap_or(0) as usize;
+        edit(s, |cx| {
+            let shm = cx.sheet_mut(idx)?;
+            for (j, cell) in head.iter().enumerate() {
+                if let Some(cell) = cell {
+                    shm.set_cell(CellRef::new(0, j as u32), cell.clone());
+                }
+            }
+            for (i, row) in rows.iter().enumerate() {
+                for (j, cell) in row.iter().enumerate() {
+                    if let Some(cell) = cell {
+                        shm.set_cell(CellRef::new(1 + i as u32, j as u32), cell.clone());
+                    }
+                }
+            }
+            let last = CellRef::new(rows.len() as u32, head.len().saturating_sub(1) as u32);
+            for c in RangeRef::new(CellRef::new(0, 0), last).iter() {
+                cx.changed.push((idx, c));
+            }
+            Ok(())
+        })?;
+        made.push(json!({"sheet": name, "rows": rows.len()}));
+    }
+    Ok(json!({"sheets": made}))
+}
+
+/// Appends the rows of the other sheets below the active sheet's data, positionally.
+fn merge_sheets(s: &mut Session, p: &Json) -> Result<Json> {
+    let sheet = target_sheet(s, p)?;
+    let header = bool_param(p, "header").unwrap_or(true);
+    let names: Vec<String> = match p.get("sheets").and_then(Json::as_array) {
+        Some(a) => a.iter().filter_map(Json::as_str).map(str::to_string).collect(),
+        None => {
+            let d = s.doc()?;
+            d.wb.sheets.iter().enumerate().filter(|(i, _)| *i != sheet).map(|(_, sh)| sh.name.clone()).collect()
+        }
+    };
+    let (dest, sources) = {
+        let d = s.doc()?;
+        let wb = &d.wb;
+        let sh = wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
+        let dest = match str_param(p, "destination").and_then(RangeRef::parse) {
+            Some(x) => x.start,
+            None => sh.used_range().map(|u| CellRef::new(u.end.row + 1, u.start.col)).unwrap_or(CellRef::new(0, 0)),
+        };
+        let mut sources: Vec<Vec<Vec<Option<Cell>>>> = Vec::new();
+        for n in &names {
+            let Some(si) = wb.sheet_index(n) else { continue };
+            if si == sheet {
+                continue;
+            }
+            let Some(src) = wb.sheet(si) else { continue };
+            let Some(u) = src.used_range() else { continue };
+            let rows: Vec<Vec<Option<Cell>>> = (u.start.row + header as u32..=u.end.row)
+                .map(|row| (u.start.col..=u.end.col).map(|c| src.cell(CellRef::new(row, c)).cloned()).collect())
+                .collect();
+            if !rows.is_empty() {
+                sources.push(rows);
+            }
+        }
+        (dest, sources)
+    };
+    let mut row = dest.row;
+    let mut appended = 0usize;
+    for rows in sources {
+        let base = row;
+        let width = rows.first().map(|r| r.len()).unwrap_or(0);
+        edit(s, |cx| {
+            let shm = cx.sheet_mut(sheet)?;
+            for (i, r) in rows.iter().enumerate() {
+                for (j, cell) in r.iter().enumerate() {
+                    if let Some(cell) = cell {
+                        shm.set_cell(CellRef::new(base + i as u32, dest.col + j as u32), cell.clone());
+                    }
+                }
+            }
+            let last = CellRef::new(base + rows.len().saturating_sub(1) as u32, dest.col + width.saturating_sub(1) as u32);
+            for c in RangeRef::new(CellRef::new(base, dest.col), last).iter() {
+                cx.changed.push((sheet, c));
+            }
+            Ok(())
+        })?;
+        row += rows.len() as u32;
+        appended += rows.len();
+    }
+    Ok(json!({"appended": appended}))
+}
+
+/// A new sheet listing every sheet with a link to it.
+fn create_index(s: &mut Session, p: &Json) -> Result<Json> {
+    let name = str_param(p, "name").unwrap_or("Index").to_string();
+    let names: Vec<String> = {
+        let d = s.doc()?;
+        d.wb.sheets.iter().map(|sh| sh.name.clone()).collect()
+    };
+    let idx = s.execute("home.insertSheet", json!({"name": name}))?["index"].as_u64().unwrap_or(0) as usize;
+    edit(s, |cx| {
+        let cells: Vec<CellRef> = (0..names.len() as u32).map(|i| CellRef::new(i, 0)).collect();
+        {
+            let shm = cx.sheet_mut(idx)?;
+            for (i, n) in names.iter().enumerate() {
+                let at = CellRef::new(i as u32, 0);
+                shm.set_cell(at, Cell { value: Value::text(n.as_str()), formula: None, style: StyleId::DEFAULT });
+                shm.hyperlinks.insert(at, Hyperlink { target: format!("#'{n}'!A1"), tooltip: None });
+            }
+        }
+        for at in cells {
+            cx.changed.push((idx, at));
+        }
+        Ok(())
+    })?;
+    Ok(json!({"sheet": name, "links": names.len()}))
 }
 
 fn split_delimited(text: &str, delims: &[char], consecutive: bool, quote: char) -> Vec<String> {

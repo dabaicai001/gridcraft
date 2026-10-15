@@ -93,6 +93,33 @@ pub fn specs() -> Vec<CommandSpec> {
             fill_series
         ),
         cmd!("edit.flashFill", "Flash Fill", ["Home", "Editing", "Fill"], Some("Ctrl+E"), "{range?}", has_doc, flash_fill),
+        cmd!(
+            "edit.fillBlanks",
+            "Fill Blanks…",
+            ["Home", "Editing", "Fill"],
+            None,
+            "{range?, from?: above|left|value|zero, value?: \"0\"} — writes into the empty cells of the range, taking the value from the cell above, the cell to the left, a literal or zero",
+            has_doc,
+            fill_blanks
+        ),
+        cmd!(
+            "edit.insertTextBatch",
+            "Insert Text into Cells…",
+            ["Home", "Editing", "Fill"],
+            None,
+            "{range?, text: \"x\", at?: start|end|position, position?: 3, includeBlanks?: bool} — inserts text at the start, the end or a character position of every cell's text in the range",
+            has_doc,
+            insert_text_batch
+        ),
+        cmd!(
+            "selection.invert",
+            "Invert Selection",
+            ["Home", "Editing", "Find & Select"],
+            None,
+            "{range?} — selects the cells of the range the selection does not cover",
+            has_doc,
+            invert_selection
+        ),
         cmd!(noundo "edit.find", "Find…", ["Home", "Editing", "Find & Select"], Some("Cmd+F"), "{what, matchCase?, wholeCell?, lookIn?: formulas|values, byColumns?, all?: bool, within?: sheet|workbook}", has_doc, find),
         cmd!(
             "edit.replace",
@@ -1359,6 +1386,160 @@ fn fill_series(s: &mut Session, p: &Json) -> Result<Json> {
     edit(s, |cx| {
         crate::fill::series(cx, sheet, r, rows, &kind, step, stop, &unit)?;
         Ok(Json::Null)
+    })
+}
+
+/// WPS 填充空白单元格: writes a value into every empty cell of the range, taking it from the
+/// cell above, the cell to the left, a literal, or zero.
+fn fill_blanks(s: &mut Session, p: &Json) -> Result<Json> {
+    let sheet = target_sheet(s, p)?;
+    let r = target_range(s, p)?;
+    if r.count() > 1_000_000 {
+        return Err(bad("edit.fillBlanks", "range too large"));
+    }
+    let literal: Option<String> = str_param(p, "value").or_else(|| str_param(p, "with")).map(|t| t.to_string());
+    let from = str_param(p, "from").unwrap_or(if literal.is_some() { "value" } else { "above" }).to_string();
+    let filled = edit(s, |cx| {
+        let Some(sh) = cx.wb.sheet(sheet) else { return Ok(0u32) };
+        // The range's values are read once: the write path needs the sheet mutably.
+        let grid: Vec<Vec<String>> =
+            (r.start.row..=r.end.row).map(|row| (r.start.col..=r.end.col).map(|col| sh.value(CellRef::new(row, col)).display()).collect()).collect();
+        // A blank cell takes the value above it and that value carries down, as filling a
+        // column of blanks with Ctrl+D does; `left` carries the same way along a row.
+        let mut above: Vec<Option<String>> = vec![None; r.width() as usize];
+        let mut writes: Vec<(CellRef, String)> = Vec::new();
+        for (i, row_vals) in grid.iter().enumerate() {
+            let mut left: Option<String> = None;
+            for (j, cur) in row_vals.iter().enumerate() {
+                let c = CellRef::new(r.start.row + i as u32, r.start.col + j as u32);
+                if !cur.is_empty() {
+                    above[j] = Some(cur.clone());
+                    left = Some(cur.clone());
+                    continue;
+                }
+                let text = match from.as_str() {
+                    "left" => left.clone(),
+                    "zero" => Some("0".to_string()),
+                    "value" => literal.clone(),
+                    _ => above[j].clone(),
+                };
+                if let Some(text) = text
+                    && !text.is_empty()
+                {
+                    writes.push((c, text.clone()));
+                    above[j] = Some(text.clone());
+                    left = Some(text);
+                }
+            }
+        }
+        let mut n = 0u32;
+        for (c, text) in writes {
+            let cell = input_to_cell(&text, sheet, c, &mut cx.wb).unwrap_or(None);
+            let shm = cx.sheet_mut(sheet)?;
+            match cell {
+                Some(x) => shm.set_cell(c, x),
+                None => {
+                    shm.remove_cell(c);
+                }
+            }
+            cx.changed.push((sheet, c));
+            n += 1;
+        }
+        Ok(n)
+    })?;
+    Ok(json!({"filled": filled}))
+}
+
+/// WPS 批量插入文本到单元格: inserts text at the start, the end or a character position of
+/// every cell's text. Cells holding a formula are left alone: their text is a computed
+/// result, and rewriting it would silently drop the formula.
+fn insert_text_batch(s: &mut Session, p: &Json) -> Result<Json> {
+    let sheet = target_sheet(s, p)?;
+    let r = target_range(s, p)?;
+    let text = str_param(p, "text").ok_or_else(|| bad("edit.insertTextBatch", "missing `text`"))?;
+    let at = str_param(p, "at").unwrap_or("start").to_string();
+    let position = f64_param(p, "position").map(|n| n.max(1.0) as usize);
+    let blanks = bool_param(p, "includeBlanks").unwrap_or(false);
+    if r.count() > 1_000_000 {
+        return Err(bad("edit.insertTextBatch", "range too large"));
+    }
+    let updated = edit(s, |cx| {
+        let Some(sh) = cx.wb.sheet(sheet) else { return Ok(0u32) };
+        let mut writes: Vec<(CellRef, String)> = Vec::new();
+        for c in r.iter() {
+            if sh.cell(c).is_some_and(|cell| cell.formula.is_some()) {
+                continue;
+            }
+            let cur = sh.value(c).display();
+            if cur.is_empty() && !blanks {
+                continue;
+            }
+            let next = match at.as_str() {
+                "end" => format!("{cur}{text}"),
+                "position" => {
+                    let chars: Vec<char> = cur.chars().collect();
+                    let cut = position.unwrap_or(1).saturating_sub(1).min(chars.len());
+                    let mut out: String = chars[..cut].iter().collect();
+                    out.push_str(text);
+                    out.extend(chars[cut..].iter());
+                    out
+                }
+                _ => format!("{text}{cur}"),
+            };
+            writes.push((c, next));
+        }
+        let mut n = 0u32;
+        for (c, t) in writes {
+            let cell = input_to_cell(&t, sheet, c, &mut cx.wb).unwrap_or(None);
+            let shm = cx.sheet_mut(sheet)?;
+            match cell {
+                Some(x) => shm.set_cell(c, x),
+                None => {
+                    shm.remove_cell(c);
+                }
+            }
+            cx.changed.push((sheet, c));
+            n += 1;
+        }
+        Ok(n)
+    })?;
+    Ok(json!({"updated": updated}))
+}
+
+/// Selects the cells of `range` the selection does not cover, as Find & Select ▸ Invert does.
+fn invert_selection(s: &mut Session, p: &Json) -> Result<Json> {
+    let r = target_range(s, p)?;
+    if r.count() > 1_000_000 {
+        return Err(bad("selection.invert", "range too large"));
+    }
+    let covered: Vec<RangeRef> = {
+        let d = s.doc()?;
+        d.selection.ranges.clone()
+    };
+    edit(s, |cx| {
+        // Contiguous cells in a row become one range, as a drag would select them.
+        let mut ranges: Vec<RangeRef> = Vec::new();
+        let mut run: Option<(CellRef, CellRef)> = None;
+        let mut last = r.start;
+        for c in r.iter().filter(|c| !covered.iter().any(|x| x.contains(*c))) {
+            last = c;
+            match run {
+                Some((start, end)) if end.row == c.row && end.col.checked_add(1) == Some(c.col) => run = Some((start, c)),
+                Some((start, end)) => {
+                    ranges.push(RangeRef::new(start, end));
+                    run = Some((c, c));
+                }
+                None => run = Some((c, c)),
+            }
+        }
+        if let Some((start, end)) = run {
+            ranges.push(RangeRef::new(start, end));
+        }
+        if ranges.is_empty() {
+            return Err(bad("selection.invert", "the selection already covers the whole range"));
+        }
+        *cx.sel = crate::Selection { active: last, anchor: last, ranges };
+        Ok(json!({"ranges": cx.sel.ranges.len()}))
     })
 }
 
