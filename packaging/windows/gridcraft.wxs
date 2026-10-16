@@ -22,6 +22,11 @@
       Compressed="yes"
       Language="1033">
     <SummaryInformation Description="GridCraft spreadsheet" Manufacturer="Learning Machines LLC" />
+    <!-- WiX v5's Scope="perUser" only steers directory defaults; the install context itself
+         comes from these two properties. Together they pin the package to per-user: no
+         elevation prompt, registration under HKCU, and per-machine install is refused. -->
+    <Property Id="MSIINSTALLPERUSER" Value="1" />
+    <Property Id="ALLUSERS" Value="2" />
     <!-- Same-version upgrades let successive pre-releases of one X.Y.Z replace each other
          (MSI versions are numeric, so 1.2.3-rc.1 and 1.2.3-rc.2 are both 1.2.3). -->
     <MajorUpgrade AllowSameVersionUpgrades="yes"
