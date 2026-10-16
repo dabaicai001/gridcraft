@@ -780,6 +780,14 @@ mod tests {
         assert_eq!(Language::Cs.tr("Data"), "Data");
         assert_eq!(Language::Cs.tr("Formulas"), "Vzorce");
         assert_eq!(Language::Cs.tr("Sheet1!A1"), "Sheet1!A1");
+        // The Format menu's sheet items and the Fill menu's series items are translated in Chinese.
+        assert_eq!(Language::Zh.tr("Hide Sheet"), "隐藏工作表");
+        assert_eq!(Language::Zh.tr("Unhide Sheet…"), "取消隐藏工作表…");
+        assert_eq!(Language::Zh.tr("Rename Sheet"), "重命名工作表");
+        assert_eq!(Language::Zh.tr("Move or Copy Sheet…"), "移动或复制工作表…");
+        assert_eq!(Language::Zh.tr("Series…"), "序列…");
+        assert_eq!(Language::Zh.tr("Fill Blanks…"), "填充空白…");
+        assert_eq!(Language::Zh.tr("Insert Text into Cells…"), "在单元格中插入文本…");
         // A `context|label` key shows only its label in English and splits the translation.
         assert_eq!(Language::En.tr("Page Layout|Orientation"), "Orientation");
         assert_eq!(Language::Ja.tr("Page Layout|Orientation"), "印刷の向き");

@@ -90,6 +90,12 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Flash\nFill" => "快速\n填充",
         "Flash Fill" => "快速填充",
         "Fill" => "填充",
+        "Series…" => "序列…",
+        "Series" => "序列",
+        "Fill Blanks…" => "填充空白…",
+        "Fill Blanks" => "填充空白",
+        "Insert Text into Cells…" => "在单元格中插入文本…",
+        "Insert Text into Cells" => "在单元格中插入文本",
         "Clear Print Area" => "清除打印区域",
         "Find &\nSelect" => "查找与\n选择",
         "Find…" => "查找…",
@@ -552,6 +558,10 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Select All Sheets" => "选定全部工作表",
         "Tab Color" => "工作表标签颜色",
         "Unhide…" => "取消隐藏…",
+        "Hide Sheet" => "隐藏工作表",
+        "Unhide Sheet…" => "取消隐藏工作表…",
+        "Rename Sheet" => "重命名工作表",
+        "Move or Copy Sheet…" => "移动或复制工作表…",
         _ => return None,
     })
 }
