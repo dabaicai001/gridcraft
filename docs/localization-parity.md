@@ -44,7 +44,7 @@ separators, number/date formats, machine translation with agent review, and scri
 | Language | Code | UI strings translated | Dialogs / tooltips / help | Script support | Native review | Status | Estimate to full |
 |---|---|---|---|---|---|---|---|
 | English | en | ~2,200 / ~2,200 (100%, source) | yes | Latin: yes | yes | full | — |
-| Simplified Chinese (Mandarin) | zh-Hans | 825 (~38%) | no | CJK system-font fallback (#38); IME unverified; PDF can't export | no | menus + dialogs | 8–13 h |
+| Simplified Chinese (Mandarin) | zh-Hans | 958 (~44%) | no | CJK system-font fallback (#38); IME unverified; PDF can't export | no | menus + dialogs | 8–13 h |
 | Spanish | es | 0 (0%) | no | Latin: yes | no | none | 6–10 h |
 | Hindi | hi | 0 (0%) | no | Devanagari: **no shaping** | no | none | 12–18 h |
 | Arabic | ar | 0 (0%) | no | **no shaping, no RTL UI**; Sheet Right-to-Left mirrors the grid (#146) | no | none | 25–35 h |
@@ -78,6 +78,7 @@ language (none so far) and of localized function names.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | minor | zh: the rest of the interface off English literals (`i18n/zh.rs`, 958 labels, ~44%) — Find and Replace, Go To, Sort, Name Manager, Format Cells (tabs, fields, protection note), Goal Seek, Solver and its results, Spelling, Select Data, the rules manager, command palette, About/Macros/Agents, the Share menu and the PivotTable Fields pane; the raw literals in those dialogs now go through `Language::tr` |
 | 2026-10-16 | minor | Merge of upstream `main` (421 commits, v0.7.0) into this fork: Serbian (`sr`) table and language; upstream's wording kept where both translate the same key, this fork's Chinese and its 277 extra dialog labels kept |
 | 2026-10-16 | minor | zh: dialogs taken off English literals (`i18n/zh.rs`, 825 labels, ~38%) — titles, form fields, choice options and notes across every dialog; the filter list's Invert/Duplicates/Unique Values/Fuzzy Filter labels |
 | 2026-10-16 | minor | zh: Format and Fill menu labels translated (`i18n/zh.rs`, 558 labels): Hide/Unhide/Rename/Move or Copy Sheet and Series/Fill Blanks/Insert Text into Cells, including the dialog titles they open |

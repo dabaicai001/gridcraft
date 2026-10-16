@@ -218,15 +218,15 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {
         ui.label(lang.tr("Show"));
         for m in NameMode::ALL {
-            if ui.selectable_label(v.names == m, m.label()).clicked() {
+            if ui.selectable_label(v.names == m, lang.tr(m.label())).clicked() {
                 v.names = m;
             }
         }
         ui.separator();
         ui.label(lang.tr("Sort"));
-        egui::ComboBox::from_id_salt("credits_sort").selected_text(v.key.label().0).show_ui(ui, |ui| {
+        egui::ComboBox::from_id_salt("credits_sort").selected_text(lang.tr(v.key.label().0)).show_ui(ui, |ui| {
             for k in SortKey::ALL {
-                if ui.selectable_label(v.key == k, k.label().0).clicked() {
+                if ui.selectable_label(v.key == k, lang.tr(k.label().0)).clicked() {
                     v.key = k;
                     v.ascending = k.default_ascending();
                 }
@@ -244,7 +244,7 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
         }
     });
     let list = sorted(CONTRIBUTORS, v.names, v.key, v.ascending);
-    ui.label(RichText::new(format!("{} contributors · {} commits", list.len(), group(TOTAL_COMMITS))).small().weak());
+    ui.label(RichText::new(format!("{} {} · {} {}", list.len(), lang.tr("contributors"), group(TOTAL_COMMITS), lang.tr("commits"))).small().weak());
     ui.separator();
     egui::ScrollArea::both().auto_shrink([false, false]).max_height(340.0).show(ui, |ui| {
         if list.is_empty() {
@@ -266,10 +266,11 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
 }
 
 fn table(ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
+    let lang = crate::i18n::current(ui.ctx());
     egui::Grid::new("credits_table").striped(true).num_columns(SortKey::ALL.len()).show(ui, |ui| {
         for k in SortKey::ALL {
             let arrow = if v.key == k { if v.ascending { " ▲" } else { " ▼" } } else { "" };
-            if ui.button(RichText::new(format!("{}{arrow}", k.label().1)).strong()).on_hover_text(k.label().0).clicked() {
+            if ui.button(RichText::new(format!("{}{arrow}", lang.tr(k.label().1))).strong()).on_hover_text(lang.tr(k.label().0)).clicked() {
                 if v.key == k {
                     v.ascending = !v.ascending;
                 } else {

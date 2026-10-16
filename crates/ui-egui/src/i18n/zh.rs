@@ -852,6 +852,152 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Conditional formats" => "条件格式",
         "Custom (%):" => "自定义(%):",
         "Unhide sheet:" => "取消隐藏工作表:",
+        // Format Cells dialog (tabs, fields and the protection note).
+        "Category:" => "类别:",
+        "Alignment" => "对齐方式",
+        "Font" => "字体",
+        "Border" => "边框",
+        "Protection" => "保护",
+        "Format Cells|Fill" => "设置单元格格式|填充",
+        "Sample" => "示例",
+        "Background Color:" => "背景色:",
+        "Color:" => "颜色:",
+        "Bold" => "粗体",
+        "Italic" => "倾斜",
+        "Subscript" => "下标",
+        "Superscript" => "上标",
+        "Indent" => "缩进",
+        "Outline" => "空心",
+        "Shrink to fit" => "缩小字体填充",
+        "Wrap text" => "自动换行",
+        "Vertical" => "垂直对齐",
+        "Orientation (degrees)" => "方向(度数)",
+        "Type (custom format code):" => "类型(自定义格式代码):",
+        "Locked" => "锁定",
+        "Hidden" => "隐藏",
+        "No Color" => "无颜色",
+        "Locking cells or hiding formulas has no effect until you protect the worksheet (Review › Protect Sheet)." => {
+            "在执行“审阅 ▸ 保护工作表”之前，锁定单元格或隐藏公式不会生效。"
+        }
+        // Find and Replace, Go To, Sort, Name Manager.
+        "Search:" => "搜索:",
+        "e.g. lookup, average, date" => "例如 查找、平均值、日期",
+        "Find what:" => "查找内容:",
+        "Replace with:" => "替换为:",
+        "Match case" => "区分大小写",
+        "Match entire cell contents" => "单元格匹配",
+        "Within workbook" => "工作簿",
+        "Replace All" => "全部替换",
+        "Find All" => "查找全部",
+        "Find Next" => "查找下一个",
+        "Reference:" => "引用:",
+        "Special…" => "定位条件…",
+        "My list has headers" => "数据包含标题",
+        "Sort by" => "主要关键字",
+        "Then by" => "次要关键字",
+        "Cell Color" => "单元格颜色",
+        "Cell Values" => "单元格值",
+        "A to Z" => "升序",
+        "Z to A" => "降序",
+        "+ Add Level" => "+ 添加条件",
+        "New…" => "新建…",
+        "Edit…" => "编辑…",
+        "Name" => "名称",
+        "Refers To" => "引用位置",
+        "Scope" => "适用范围",
+        // Chart Select Data, rules manager, command palette.
+        "Legend Entries (Series)" => "图例项(系列)",
+        "Keep" => "保留",
+        "Remove" => "移除",
+        "There are no conditional formatting rules on this sheet." => "此工作表上没有条件格式规则。",
+        "Type a command, e.g. freeze, chart, bold…" => "输入命令，如 冻结、图表、粗体…",
+        // Goal Seek.
+        "Set cell:" => "设置单元格:",
+        "To value:" => "到值:",
+        "By changing cell:" => "通过更改单元格:",
+        // Solver and its results.
+        "Set Objective:" => "设置目标:",
+        "By Changing Variable Cells:" => "可变单元格:",
+        "Make Unconstrained Variables Non-Negative" => "使无约束变量为非负数",
+        "Select a Solving Method:" => "求解方法:",
+        "Simplex LP" => "单纯形 LP",
+        "Evolutionary" => "演化算法",
+        "GRG Nonlinear" => "GRG 非线性",
+        "Simplex LP: for linear models; integer and binary constraints by branch and bound." => {
+            "单纯形 LP:用于线性模型;整数与二进制约束通过分支定界求解。"
+        }
+        "Evolutionary: a genetic search for models that aren't smooth; every variable cell needs bounds." => {
+            "演化算法:用于非平滑模型的遗传搜索;每个可变单元格都需要设置界限。"
+        }
+        "GRG Nonlinear: a local optimum of a smooth model, from the current values." => "GRG 非线性:从当前值出发，求平滑模型的局部最优解。",
+        "Solve" => "求解",
+        "Keep Solver Solution" => "保留求解结果",
+        "Restore Original Values" => "还原为原值",
+        "Reports:" => "报告:",
+        "Answer" => "答案",
+        "Limits" => "极限",
+        // Spelling.
+        "The spelling check is complete for the entire sheet." => "已完成对整个工作表的拼写检查。",
+        "Not in Dictionary:" => "不在词典中:",
+        "Suggestions:" => "建议:",
+        "(No suggestions)" => "(无建议)",
+        "Ignore Once" => "忽略一次",
+        "Add to Dictionary" => "添加到词典",
+        "Change" => "更改",
+        "Change All" => "全部更改",
+        // About, Macros and the Agents dialog.
+        "A clean-room, open-source, Rust-native spreadsheet. Part of ArtCraft." => "一款全新开发的、开源的、Rust 原生电子表格，属于 ArtCraft。",
+        "Automation in this workbook. GridCraft runs its own scripts; a file's VBA project is preserved but not executed." => {
+            "此工作簿中的自动化。GridCraft 运行自己的脚本；文件中的 VBA 项目会保留但不执行。"
+        }
+        "This workbook has no scripts or macros." => "此工作簿没有脚本或宏。",
+        "— VBA project (preserved, not run)" => "— VBA 项目(已保留，不运行)",
+        "GridCraft is fully drivable by agents. Every menu item, button and gesture is a command:" => {
+            "GridCraft 完全可由智能体驱动。每个菜单项、按钮和手势都是一条命令:"
+        }
+        "engine commands are available. See docs/mcp.md and docs/control-protocol.md." => {
+            "条引擎命令可用。详见 docs/mcp.md 和 docs/control-protocol.md。"
+        }
+        "Don't Save" => "不保存",
+        "Start a new workbook" => "开始新建工作簿",
+        // Share menu.
+        "Export as PDF…" => "导出为 PDF…",
+        "Save a Copy as Excel Workbook (.xlsx)…" => "将副本保存为 Excel 工作簿(.xlsx)…",
+        "Export as CSV…" => "导出为 CSV…",
+        "Export as Web Page (.html)…" => "导出为网页(.html)…",
+        // PivotTable Fields pane and its field menus.
+        "Filters" => "筛选器",
+        "Values" => "值",
+        "Move to Row Labels" => "移动到行标签",
+        "Move to Column Labels" => "移动到列标签",
+        "Move to Report Filter" => "移动到报表筛选",
+        "Move to Values" => "移动到值",
+        "Summarize by Sum" => "按求和汇总",
+        "Summarize by Count" => "按计数汇总",
+        "Summarize by Average" => "按平均值汇总",
+        "Summarize by Max" => "按最大值汇总",
+        "Summarize by Min" => "按最小值汇总",
+        "Show as No Calculation" => "无计算",
+        "Show as % of Grand Total" => "占总和的百分比",
+        "Show as Running Total" => "累计值",
+        "Show as Rank" => "排名",
+        // Subtotal grouping, forecast, data validation.
+        "Group by Months" => "按月分组",
+        "Group by Quarters" => "按季度分组",
+        "Group by Years" => "按年分组",
+        "Forecast start (a date or number in the history; blank: after the last point):" => "预测起点(历史中的日期或数字;留空:最后一个数据点之后):",
+        "End date:" => "结束日期:",
+        "Source:" => "来源:",
+        // About ▸ Contributors.
+        "Commits" => "提交数",
+        "PRs" => "合并 PR",
+        "First" => "最早提交",
+        "Last" => "最晚提交",
+        "contributors" => "贡献者",
+        "commits" => "次提交",
+        "Username" => "用户名",
+        "Display name" => "显示名称",
+        "Real name" => "真实姓名",
         _ => return None,
     })
 }
