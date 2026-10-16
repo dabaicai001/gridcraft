@@ -567,6 +567,9 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     app.grid.cells_rect = Some(geo.mirror_rect(geo.cells));
     // The selection outline glides to a new selection. It stays on its cells when Animations is
     // off, when egui's animations are (the headless harness), and while a screenshot is on its way.
+    // While the mouse is dragging the selection out, the pointer is the target: gliding would
+    // trail behind it, so the outline tracks the drag exactly (like Excel).
+    let dragging_selection = matches!(app.grid.drag, Drag::Select | Drag::Rows(_) | Drag::Cols(_));
     let outline = app.grid.glide.frame(crate::selection_glide::Frame {
         place,
         range: sel.current(),
@@ -574,7 +577,7 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
         view: geo.cells,
         now,
         frame_nr: ui.ctx().cumulative_frame_nr(),
-        animate: app.ui.animations && ui.ctx().global_style().animation_time > 0.0 && !app.shots.in_flight(),
+        animate: app.ui.animations && ui.ctx().global_style().animation_time > 0.0 && !app.shots.in_flight() && !dragging_selection,
     });
     if app.grid.glide.is_gliding() {
         ui.ctx().request_repaint();

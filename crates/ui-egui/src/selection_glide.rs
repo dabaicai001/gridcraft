@@ -6,9 +6,11 @@
 //! estimate ([`GLIDE_SECS`]), not yet measured against Excel.
 //!
 //! What glides and what doesn't:
-//! - the selection changed (arrows, Enter, Tab, a click, a drag, Shift+arrows, the Name Box, any
+//! - the selection changed (arrows, Enter, Tab, a click, Shift+arrows, the Name Box, any
 //!   command): the outline of the current area, its fill and its fill handle glide from wherever
 //!   they are drawn right now, so a held arrow key reads as one continuous motion;
+//! - a mouse drag that extends the selection (cells, whole rows or columns): no glide — the
+//!   outline tracks the pointer exactly, or it would trail behind it;
 //! - the same cells moved on screen (scrolling, zoom, a resized column or window): the outline
 //!   stays glued to its cells;
 //! - another sheet or workbook, an outline that wasn't drawn the frame before, a move that starts

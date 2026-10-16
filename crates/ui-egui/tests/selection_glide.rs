@@ -201,3 +201,37 @@ fn agents_find_run_and_read_the_setting_over_the_control_channel() {
     assert_eq!(set["result"]["animations"], json!(true));
     assert!(a.ui.animations);
 }
+
+#[test]
+fn dragging_the_selection_tracks_the_pointer_without_gliding() {
+    let mut h = animated();
+    let start = cell_rect(&h, "A1").center();
+    h.input_mut().events.push(egui::Event::PointerMoved(start));
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: start,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    let end = cell_rect(&h, "D5").center();
+    h.input_mut().events.push(egui::Event::PointerMoved(end));
+    h.step();
+    // The selection extends at once; the outline follows on the next painted frame (the drag is
+    // handled after the outline is computed within a frame), but it never glides: a glide that
+    // trails the pointer is precisely the lag a drag must not have.
+    assert_eq!(h.state().session.active().map(|d| d.selection.current().a1()).as_deref(), Some("A1:D5"));
+    assert!(!gliding(&h), "a drag never glides");
+    h.step();
+    assert!(!gliding(&h));
+    assert_eq!(outline(&h), cell_rect(&h, "A1").union(cell_rect(&h, "D5")));
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: end,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    steps(&mut h, 3);
+    assert_eq!(h.state().session.active().map(|d| d.selection.current().a1()).as_deref(), Some("A1:D5"));
+    assert!(!gliding(&h));
+}
