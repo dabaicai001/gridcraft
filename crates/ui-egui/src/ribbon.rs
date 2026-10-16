@@ -980,6 +980,8 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
                     ("Left", "edit.fillLeft", json!({})),
                     ("Series…", "dialog:series", json!({})),
                     ("Flash Fill", "edit.flashFill", json!({})),
+                    ("Fill Blanks…", "dialog:fillBlanks", json!({})),
+                    ("Insert Text into Cells…", "dialog:insertTextBatch", json!({})),
                 ],
             );
         });
@@ -1911,6 +1913,11 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
         if __k.clicked() {
             act(app, "data.reapply", json!({}));
         }
+        let __k = small_button(ui, Icon::Filter, "Quick", "Quick Filter: filter this column by the active cell", false);
+        control_keytip(app, ui, &__k, "data.quickFilter");
+        if __k.clicked() {
+            act(app, "data.quickFilter", json!({}));
+        }
     });
     sep(ui);
     let __k = big_button(ui, Icon::TextColumns, "Text to\nColumns", "Text to Columns", false);
@@ -1927,6 +1934,37 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
     control_keytip(app, ui, &__k, "dialog:removeDuplicates");
     if __k.clicked() {
         app.open_dialog("removeDuplicates", json!({}));
+    }
+    let __k = big_button(ui, Icon::Trace, "Compare\nRanges", "Compare two ranges of the same shape and highlight the differences", false);
+    control_keytip(app, ui, &__k, "dialog:compareRanges");
+    if __k.clicked() {
+        app.open_dialog("compareRanges", json!({}));
+    }
+    let __k = big_button(ui, Icon::Table, "Split by\nColumn", "Write the rows into one new sheet per value of a column", false);
+    control_keytip(app, ui, &__k, "dialog:splitByColumn");
+    if __k.clicked() {
+        app.open_dialog("splitByColumn", json!({}));
+    }
+    let __k = big_button(ui, Icon::Merge, "Merge\nSheets", "Append the other sheets' rows below this one", false);
+    control_keytip(app, ui, &__k, "dialog:mergeSheets");
+    if __k.clicked() {
+        app.open_dialog("mergeSheets", json!({}));
+    }
+    let __k =
+        big_button(ui, Icon::Sum, "Conditional\nStatistics", "Count, sum, average, maximum or minimum over the cells meeting a criterion", false);
+    control_keytip(app, ui, &__k, "dialog:conditionalStatistics");
+    if __k.clicked() {
+        app.open_dialog("conditionalStatistics", json!({}));
+    }
+    let __k = big_button(ui, Icon::SortAsc, "Rank", "Write each value's rank next to it", false);
+    control_keytip(app, ui, &__k, "data.rankEntry");
+    if __k.clicked() {
+        act(app, "data.rankEntry", json!({}));
+    }
+    let __k = big_button(ui, Icon::Name, "Create\nIndex", "A new sheet listing every sheet with a link to it", false);
+    control_keytip(app, ui, &__k, "data.createIndex");
+    if __k.clicked() {
+        act(app, "data.createIndex", json!({}));
     }
     let dv = big_button(ui, Icon::Validation, "Data\nValidation", "Data Validation", true);
     for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["data.validation", "data.circleInvalid"]) {

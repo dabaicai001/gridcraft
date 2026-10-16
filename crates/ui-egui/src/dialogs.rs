@@ -530,6 +530,87 @@ impl Dialog {
                     defaults,
                 )
             }
+            "compareRanges" => Dialog::form(
+                "compareRanges",
+                "Compare Ranges",
+                "data.compareRanges",
+                vec![
+                    Text { key: "range", label: "Compare (range):" },
+                    Text { key: "with", label: "With (range):" },
+                    Check { key: "highlight", label: "Highlight the differences" },
+                ],
+                json!({"range": sel, "with": String::new(), "highlight": true}),
+            ),
+            "splitByColumn" => Dialog::form(
+                "splitByColumn",
+                "Split by Column",
+                "data.splitByColumn",
+                vec![Text { key: "column", label: "Split by column:" }, Check { key: "header", label: "My data has headers" }],
+                json!({"range": sel, "column": "A", "header": true}),
+            ),
+            "mergeSheets" => Dialog::form(
+                "mergeSheets",
+                "Merge Sheets",
+                "data.mergeSheets",
+                vec![
+                    Text { key: "sheets", label: "Sheets to merge (comma-separated; blank = every other sheet):" },
+                    Text { key: "destination", label: "Start at:" },
+                    Check { key: "header", label: "Skip each sheet's header row" },
+                ],
+                json!({"sheets": String::new(), "header": true}),
+            ),
+            "conditionalStatistics" => Dialog::form(
+                "conditionalStatistics",
+                "Conditional Statistics",
+                "data.conditionalStatistics",
+                vec![
+                    Choice {
+                        key: "function",
+                        label: "Function",
+                        options: vec![("count", "Count"), ("sum", "Sum"), ("average", "Average"), ("max", "Maximum"), ("min", "Minimum")],
+                    },
+                    Choice {
+                        key: "op",
+                        label: "Where the cell is",
+                        options: vec![
+                            (">", "greater than"),
+                            (">=", "at least"),
+                            ("<", "less than"),
+                            ("<=", "at most"),
+                            ("=", "equal to"),
+                            ("<>", "not equal to"),
+                        ],
+                    },
+                    Text { key: "value", label: "Value:" },
+                    Text { key: "destination", label: "Put the result in:" },
+                ],
+                json!({"range": sel, "function": "count", "op": ">", "value": String::new()}),
+            ),
+            "fillBlanks" => Dialog::form(
+                "fillBlanks",
+                "Fill Blanks",
+                "edit.fillBlanks",
+                vec![
+                    Choice {
+                        key: "from",
+                        label: "Fill with",
+                        options: vec![("above", "the value above"), ("left", "the value to the left"), ("value", "this value"), ("zero", "zero")],
+                    },
+                    Text { key: "value", label: "Value:" },
+                ],
+                json!({"range": sel, "from": "above", "value": "0"}),
+            ),
+            "insertTextBatch" => Dialog::form(
+                "insertTextBatch",
+                "Insert Text into Cells",
+                "edit.insertTextBatch",
+                vec![
+                    Text { key: "text", label: "Text to insert:" },
+                    Choice { key: "at", label: "Insert at", options: vec![("start", "the start"), ("end", "the end"), ("position", "position")] },
+                    Number { key: "position", label: "Position (1-based):" },
+                ],
+                json!({"range": sel, "text": String::new(), "at": "start", "position": 1}),
+            ),
             "dataValidation" => Dialog::form(
                 "dataValidation",
                 "Data Validation",

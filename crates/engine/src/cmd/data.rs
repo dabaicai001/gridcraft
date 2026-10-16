@@ -955,9 +955,15 @@ fn conditional_statistics(s: &mut Session, p: &Json) -> Result<Json> {
     let sheet = target_sheet(s, p)?;
     let r = data_range(s, p)?;
     let function = str_param(p, "function").unwrap_or("count").to_string();
+    // A dialog sends `op`/`value` flat; a programmatic caller may nest them under `criteria`.
     let crit = p.get("criteria");
-    let op = crit.and_then(|c| c.get("op")).and_then(Json::as_str).unwrap_or("=").to_string();
-    let value = crit.and_then(|c| c.get("value")).map(super::edit::json_to_input).unwrap_or_default();
+    let op = crit.and_then(|c| c.get("op")).and_then(Json::as_str).or_else(|| str_param(p, "op")).unwrap_or("=").to_string();
+    let value =
+        crit.and_then(|c| c.get("value")).map(super::edit::json_to_input).or_else(|| str_param(p, "value").map(str::to_string)).unwrap_or_default();
+    if crit.is_none() && str_param(p, "value").is_none() {
+        s.ui_requests.push(crate::UiRequest::Dialog("conditionalStatistics".into(), json!({"range": r.a1()})));
+        return ok();
+    }
     // Without `statRange` the criterion's own cells carry the values.
     let (stat_range, separate) = match str_param(p, "statRange").and_then(RangeRef::parse) {
         Some(x) => (x, true),
@@ -1057,7 +1063,12 @@ fn compare_ranges(s: &mut Session, p: &Json) -> Result<Json> {
     const CMD: &str = "data.compareRanges";
     let sheet = target_sheet(s, p)?;
     let a = str_param(p, "range").and_then(RangeRef::parse).ok_or_else(|| bad(CMD, "missing `range`"))?;
-    let b = str_param(p, "with").and_then(RangeRef::parse).ok_or_else(|| bad(CMD, "missing `with`"))?;
+    // The second range is what the dialog asks for: without it there is nothing to compare.
+    let Some(b) = str_param(p, "with").and_then(RangeRef::parse) else {
+        let r = target_range(s, p)?;
+        s.ui_requests.push(crate::UiRequest::Dialog("compareRanges".into(), json!({"range": r.a1()})));
+        return ok();
+    };
     if a.count() != b.count() {
         return Err(bad(CMD, "the two ranges must have the same shape"));
     }
@@ -1092,7 +1103,10 @@ fn split_by_column(s: &mut Session, p: &Json) -> Result<Json> {
     let sheet = target_sheet(s, p)?;
     let r = data_range(s, p)?;
     let header = bool_param(p, "header").unwrap_or(true);
-    let col = col_param(p.get("column"), r.start.col).ok_or_else(|| bad(CMD, "missing `column`"))?;
+    let Some(col) = col_param(p.get("column"), r.start.col) else {
+        s.ui_requests.push(crate::UiRequest::Dialog("splitByColumn".into(), json!({"range": r.a1()})));
+        return ok();
+    };
     if col < r.start.col || col > r.end.col {
         return Err(bad(CMD, "column outside the range"));
     }
@@ -1163,9 +1177,11 @@ fn split_by_column(s: &mut Session, p: &Json) -> Result<Json> {
 fn merge_sheets(s: &mut Session, p: &Json) -> Result<Json> {
     let sheet = target_sheet(s, p)?;
     let header = bool_param(p, "header").unwrap_or(true);
-    let names: Vec<String> = match p.get("sheets").and_then(Json::as_array) {
-        Some(a) => a.iter().filter_map(Json::as_str).map(str::to_string).collect(),
-        None => {
+    // A dialog sends one comma-separated string; a programmatic caller sends an array.
+    let names: Vec<String> = match p.get("sheets") {
+        Some(Json::Array(a)) => a.iter().filter_map(Json::as_str).map(str::to_string).collect(),
+        Some(Json::String(t)) if !t.trim().is_empty() => t.split([',', ';']).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect(),
+        _ => {
             let d = s.doc()?;
             d.wb.sheets.iter().enumerate().filter(|(i, _)| *i != sheet).map(|(_, sh)| sh.name.clone()).collect()
         }

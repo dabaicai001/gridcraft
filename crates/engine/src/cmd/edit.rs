@@ -1456,7 +1456,10 @@ fn fill_blanks(s: &mut Session, p: &Json) -> Result<Json> {
 fn insert_text_batch(s: &mut Session, p: &Json) -> Result<Json> {
     let sheet = target_sheet(s, p)?;
     let r = target_range(s, p)?;
-    let text = str_param(p, "text").ok_or_else(|| bad("edit.insertTextBatch", "missing `text`"))?;
+    let Some(text) = str_param(p, "text") else {
+        s.ui_requests.push(crate::UiRequest::Dialog("insertTextBatch".into(), json!({"range": r.a1()})));
+        return ok();
+    };
     let at = str_param(p, "at").unwrap_or("start").to_string();
     let position = f64_param(p, "position").map(|n| n.max(1.0) as usize);
     let blanks = bool_param(p, "includeBlanks").unwrap_or(false);
