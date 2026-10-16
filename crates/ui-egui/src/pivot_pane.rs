@@ -6,6 +6,7 @@ use egui::{Color32, Ui, vec2};
 use serde_json::{Value as Json, json};
 
 use crate::SheetApp;
+use crate::i18n;
 use crate::theme::{self, Tokens};
 
 /// Whether the active cell is inside a pivot report (so the pane should show).
@@ -18,8 +19,8 @@ pub fn active_pivot(app: &SheetApp) -> Option<String> {
 
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let Some(name) = active_pivot(app) else { return };
-    let lang = app.ui.language;
     let t = Tokens::get(ui.ctx());
+    let lang = i18n::current(ui.ctx());
     let info = match app.session.run("pivot.fields", json!({"pivot": name})) {
         Ok(v) => v,
         Err(_) => return,
@@ -65,13 +66,26 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 })
                 .unwrap_or_default()
         };
+        // Σ Values (two or more value fields) sits in Rows or Columns; it moves only between them.
+        const VALUES_FIELD: &str = "Σ Values";
+        let values_key = if info["valuesOnRows"].as_bool().unwrap_or(false) { "rows" } else { "columns" };
+        let values_at = info["valuesPosition"].as_u64().map(|p| p as usize);
+        let area_with_values = |key: &str| -> Vec<String> {
+            let mut v = area(key);
+            if key == values_key && area("values").len() > 1 {
+                let at = values_at.unwrap_or(v.len()).min(v.len());
+                v.insert(at, VALUES_FIELD.to_string());
+            }
+            v
+        };
         ui.columns(2, |cols| {
             for (i, (key, label)) in [("filters", "Filters"), ("columns", "Columns"), ("rows", "Rows"), ("values", "Values")].iter().enumerate() {
                 let ui = &mut cols[i % 2];
                 ui.label(egui::RichText::new(lang.tr(label)).strong());
                 egui::Frame::NONE.fill(t.window).corner_radius(4.0).inner_margin(4.0).show(ui, |ui| {
                     ui.set_min_size(vec2(ui.available_width(), 60.0));
-                    for f in area(key) {
+                    for f in area_with_values(key) {
+                        let is_values = f == VALUES_FIELD;
                         let b = ui.add(
                             egui::Button::new(egui::RichText::new(format!("{f} ▾")).font(theme::ui_font(12.0)))
                                 .fill(Color32::WHITE)
@@ -84,24 +98,33 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                                 ("filters", "Move to Report Filter"),
                                 ("values", "Move to Values"),
                             ] {
-                                if to != *key && ui.button(lang.tr(l)).clicked() {
+                                if to != *key && (!is_values || matches!(to, "rows" | "columns")) && ui.button(lang.tr(l)).clicked() {
                                     app.run_or_alert("pivot.moveField", json!({"pivot": name, "field": f, "from": key, "to": to}));
                                 }
                             }
+                            if is_values {
+                                return;
+                            }
                             if *key == "values" {
                                 ui.separator();
-                                for (func, l) in [("sum", "Sum"), ("count", "Count"), ("average", "Average"), ("max", "Max"), ("min", "Min")] {
-                                    if ui.button(lang.tr(&format!("Summarize by {l}"))).clicked() {
+                                for (func, l) in [
+                                    ("sum", "Summarize by Sum"),
+                                    ("count", "Summarize by Count"),
+                                    ("average", "Summarize by Average"),
+                                    ("max", "Summarize by Max"),
+                                    ("min", "Summarize by Min"),
+                                ] {
+                                    if ui.button(lang.tr(l)).clicked() {
                                         app.run_or_alert("pivot.valueSettings", json!({"pivot": name, "field": f, "func": func}));
                                     }
                                 }
                                 for (sa, l) in [
-                                    ("normal", "No Calculation"),
-                                    ("percentOfGrandTotal", "% of Grand Total"),
-                                    ("runningTotal", "Running Total"),
-                                    ("rank", "Rank"),
+                                    ("normal", "Show as No Calculation"),
+                                    ("percentOfGrandTotal", "Show as % of Grand Total"),
+                                    ("runningTotal", "Show as Running Total"),
+                                    ("rank", "Show as Rank"),
                                 ] {
-                                    if ui.button(lang.tr(&format!("Show as {l}"))).clicked() {
+                                    if ui.button(lang.tr(l)).clicked() {
                                         app.run_or_alert("pivot.valueSettings", json!({"pivot": name, "field": f, "showAs": sa}));
                                     }
                                 }

@@ -10,11 +10,13 @@ use gridcraft_numfmt::{Formatted, NumberFormat, format_value};
 /// Parsed number formats are cached by code.
 fn parsed(code: &str) -> NumberFormat {
     static CACHE: std::sync::LazyLock<Mutex<HashMap<String, NumberFormat>>> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
-    let mut m = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(f) = m.get(code) {
+    let lock = || CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(f) = lock().get(code) {
         return f.clone();
     }
+    // Parse outside the lock, so a slow code never blocks the other threads' lookups.
     let f = NumberFormat::parse(code);
+    let mut m = lock();
     if m.len() > 4096 {
         m.clear();
     }
@@ -104,20 +106,6 @@ pub fn value_text(wb: &Workbook, sheet: &Sheet, c: CellRef) -> String {
         }
         None => f.text,
     }
-}
-
-/// The text Save As CSV/Text writes for `c`: [`value_text`], except that a General number is
-/// written at full precision. The grid spells a 12-digit number `1.24412E+11`, and a CSV
-/// that kept that spelling would not read back as the same number, so it is exported the way
-/// Excel exports it — up to 15 significant digits.
-pub fn csv_value_text(wb: &Workbook, sheet: &Sheet, c: CellRef) -> String {
-    if let Value::Number(n) = sheet.value(c) {
-        let code = wb.styles.get(sheet.style_id(c)).num_fmt.as_str();
-        if parsed(code).is_general() {
-            return gridcraft_core::number_to_text(n);
-        }
-    }
-    value_text(wb, sheet, c)
 }
 
 /// Tab-separated text of a range, as the system clipboard gets it.

@@ -246,11 +246,8 @@ fn cell_set(s: &mut Session, p: &Json) -> Result<Json> {
         Some(c) => c,
         None => s.doc()?.selection.active,
     };
-    let input = str_param(p, "input")
-        .or_else(|| str_param(p, "value"))
-        .map(str::to_string)
-        .or_else(|| p.get("value").map(json_to_input))
-        .ok_or_else(|| bad("cell.set", "missing `input` (or `value`)"))?;
+    // Both spellings take a string, number or boolean, as typed (#697).
+    let input = p.get("input").or_else(|| p.get("value")).map(json_to_input).ok_or_else(|| bad("cell.set", "missing `input` (or `value`)"))?;
     let array = bool_param(p, "array").unwrap_or(false);
     let d = s.doc()?;
     if let Some(sh) = d.wb.sheet(sheet)
@@ -447,14 +444,7 @@ fn selection_move(s: &mut Session, p: &Json) -> Result<Json> {
     let Some(sheet) = d.wb.active() else { return Err(EngineError::NoDocument) };
     let sel = &mut d.selection;
     // Extension moves the far corner, not the active cell.
-    let from = if extend {
-        let r = sel.current();
-        let far_row = if sel.anchor.row == r.start.row { r.end.row } else { r.start.row };
-        let far_col = if sel.anchor.col == r.start.col { r.end.col } else { r.start.col };
-        CellRef::new(far_row, far_col)
-    } else {
-        sel.active
-    };
+    let from = if extend { sel.moving_end() } else { sel.active };
     // Skip hidden rows/columns and step over merged areas.
     let mut to = if jmp {
         jump(sheet, from, dr.signum(), dc.signum())
@@ -540,7 +530,7 @@ fn select_col(s: &mut Session, _: &Json) -> Result<Json> {
     Ok(json!({"selection": d.selection.a1()}))
 }
 
-fn go_to(s: &mut Session, p: &Json) -> Result<Json> {
+pub(super) fn go_to(s: &mut Session, p: &Json) -> Result<Json> {
     let Some(reference) = str_param(p, "reference").or_else(|| str_param(p, "range")) else { return Err(bad("edit.goTo", "missing `reference`")) };
     // A defined name or table?
     let d = s.doc()?;
@@ -1138,6 +1128,20 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                                 }
                             }
                         }
+                        // The copied cell's validation rule replaces whatever rule the destination had.
+                        if !link && matches!(what, What::All | What::AllExceptBorders | What::Validation) {
+                            let rule = src_sheet.validations.iter().find(|dv| dv.ranges.iter().any(|r| r.contains(sc))).cloned();
+                            let sh = cx.sheet_mut(dest_sheet)?;
+                            super::data::remove_validation_cells(&mut sh.validations, &[RangeRef::new(dest, dest)]);
+                            if let Some(mut dv) = rule {
+                                // Relative references move with the rule, as pasted formulas do.
+                                let first = dv.ranges.first().map_or(sc, |r| r.start);
+                                dv.f1 = super::data::move_rule_formula(&dv.f1, first, dest);
+                                dv.f2 = dv.f2.map(|f| super::data::move_rule_formula(&f, first, dest));
+                                dv.ranges = vec![RangeRef::new(dest, dest)];
+                                sh.validations.push(dv);
+                            }
+                        }
                         match what {
                             What::Comments => {
                                 if let Some(cm) = src_sheet.comments.get(&sc).cloned() {
@@ -1269,6 +1273,9 @@ fn clear(s: &mut Session, p: &Json, what: &str) -> Result<Json> {
             };
             let cells: Vec<(CellRef, Cell)> =
                 cx.wb.sheet(sheet).map(|sh| sh.cells.iter_range(r).map(|(c, x)| (c, x.clone())).collect()).unwrap_or_default();
+            // Report every stored cell we touch, even beyond a million coordinates in a sparse
+            // selection. Removed formula anchors must also reach calc so their spills disappear.
+            cx.changed.extend(cells.iter().map(|(c, _)| (sheet, *c)));
             let mut cells = cells;
             if what == "contents" {
                 for (_, cell) in cells.iter_mut() {
@@ -1307,10 +1314,24 @@ fn clear(s: &mut Session, p: &Json, what: &str) -> Result<Json> {
                 sh.hyperlinks.retain(|c, _| !r.contains(*c));
             }
             if matches!(what, "all" | "formats") {
-                sh.merges.retain(|m| !r.contains_range(m));
-            }
-            for c in r.iter().take(1_000_000) {
-                cx.changed.push((sheet, c));
+                let mut unmerged = false;
+                sh.merges.retain(|m| {
+                    let keep = !r.contains_range(m);
+                    unmerged |= !keep;
+                    keep
+                });
+                if unmerged {
+                    // An empty merge can block a spill without storing any cells in this range.
+                    // As in Unmerge, retry blocked formula anchors that could reach the freed area.
+                    let reach = RangeRef::new(CellRef::new(0, 0), r.end);
+                    let blocked: Vec<_> = sh
+                        .cells
+                        .iter_range(reach)
+                        .filter(|(_, cell)| cell.formula.is_some() && cell.value == Value::Error(gridcraft_core::CellError::Spill))
+                        .map(|(c, _)| (sheet, c))
+                        .collect();
+                    cx.changed.extend(blocked);
+                }
             }
         }
         Ok(Json::Null)
@@ -1766,6 +1787,23 @@ fn begin_edit(s: &mut Session, _: &Json) -> Result<Json> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cell_set_takes_numbers_for_input_and_value() {
+        // #697: a JSON number for `input` used to clear the cell instead of entering it.
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("cell.set", json!({"cell": "A1", "input": 123.5})).unwrap();
+        s.execute("cell.set", json!({"cell": "A2", "value": 77})).unwrap();
+        s.execute("cell.set", json!({"cell": "A3", "input": true})).unwrap();
+        s.execute("cell.set", json!({"cell": "A4", "input": "=A1+A2"})).unwrap();
+        let get = |s: &mut Session, a: &str| s.execute("cell.get", json!({"cell": a})).unwrap();
+        assert_eq!(get(&mut s, "A1")["value"], json!(123.5));
+        assert_eq!(get(&mut s, "A2")["value"], json!(77.0));
+        assert_eq!(get(&mut s, "A3")["value"], json!(true));
+        assert_eq!(get(&mut s, "A4")["value"], json!(200.5));
+        assert!(s.execute("cell.set", json!({"cell": "A5"})).is_err());
+    }
 
     #[test]
     fn legacy_array_entry() {

@@ -16,6 +16,7 @@ mod graphics;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod print;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -39,6 +40,10 @@ impl eframe::App for App {
             apple_events::poll(&self.2, &mut self.0, ctx);
         }
         self.0.logic(ctx);
+        self.0.poll_printing(ctx);
+        if ctx.input(|input| input.viewport().close_requested()) && self.0.printing.busy() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
     }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
         self.0.raw_input_hook(raw);
@@ -53,6 +58,7 @@ impl eframe::App for App {
         self.0.ui(ui);
     }
     fn on_exit(&mut self) {
+        print::finish_pending_jobs();
         save_prefs(&self.0);
         // macOS (#117): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
@@ -129,10 +135,22 @@ fn save_prefs(app: &SheetApp) {
     }
 }
 
+/// Read the system clipboard through the shared handle, creating it on first use.
+fn read_clipboard<T>(
+    handle: &RefCell<Option<arboard::Clipboard>>,
+    read: impl FnOnce(&mut arboard::Clipboard) -> Result<T, arboard::Error>,
+) -> Option<T> {
+    let mut clipboard = handle.try_borrow_mut().ok()?;
+    if clipboard.is_none() {
+        *clipboard = arboard::Clipboard::new().ok();
+    }
+    read(clipboard.as_mut()?).ok()
+}
+
 fn services() -> Services {
     // Keep the owner alive: X11/Wayland serve clipboard data from this handle.
     let clipboard: Rc<RefCell<Option<arboard::Clipboard>>> = Rc::default();
-    let paste_clipboard = clipboard.clone();
+    let (html_clipboard, text_clipboard) = (clipboard.clone(), clipboard.clone());
     Services {
         copy_html: Some(Box::new(move |html, text| {
             let mut clipboard = clipboard.borrow_mut();
@@ -141,13 +159,8 @@ fn services() -> Services {
             }
             clipboard.as_mut().ok_or("clipboard unavailable")?.set_html(html, Some(text)).map_err(|e| e.to_string())
         })),
-        paste_html: Some(Box::new(move || {
-            let mut clipboard = paste_clipboard.try_borrow_mut().ok()?;
-            if clipboard.is_none() {
-                *clipboard = arboard::Clipboard::new().ok();
-            }
-            clipboard.as_mut()?.get().html().ok()
-        })),
+        paste_html: Some(Box::new(move || read_clipboard(&html_clipboard, |clipboard| clipboard.get().html()))),
+        paste_text: Some(Box::new(move || read_clipboard(&text_clipboard, |clipboard| clipboard.get_text()))),
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .add_filter("Spreadsheets", &["xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json"])
@@ -180,18 +193,21 @@ fn services() -> Services {
             dialog.save_file().and_then(|p| p.to_str().map(str::to_string))
         })),
         open_url: Some(Box::new(|url: &str| open_with_system(url))),
-        // File › Print, Ctrl+P: the print PDF opens in the system's PDF viewer, whose Print
-        // command reaches the printer dialog (GridCraft has no printer driver of its own).
-        print: Some(Box::new(|bytes: &[u8]| match write_print_pdf(&std::env::temp_dir(), bytes) {
-            Ok(path) => open_with_system(&path.to_string_lossy()),
-            Err(e) => log::warn!("print: {e}"),
-        })),
+        printers: Some(print::discover()),
+        print_native: Some(print::submit()),
         ..Default::default()
     }
 }
 
 /// Opens a URL or file with the system's default application.
 fn open_with_system(target: &str) {
+    // Last line of defence behind `link.open` and the click prompt: the system only ever gets
+    // http, https and mailto addresses.
+    let gridcraft_engine::links::LinkKind::External(target) = gridcraft_engine::links::classify(target) else {
+        log::warn!("refused to open {target:?}: only http, https and mailto links are opened");
+        return;
+    };
+    let target = target.as_str();
     let cmd = if cfg!(target_os = "macos") {
         "open"
     } else if cfg!(windows) {
@@ -202,32 +218,6 @@ fn open_with_system(target: &str) {
     if let Err(e) = std::process::Command::new(cmd).arg(target).spawn() {
         log::warn!("{cmd} {target}: {e}");
     }
-}
-
-/// Writes a print PDF into `dir` under a fresh name (an earlier print may still be open in the
-/// viewer) and returns its path. The temp folder is shared, so the file is created exclusively
-/// (an existing file or a planted symlink is never followed or overwritten) and, on Unix, readable
-/// only by the user.
-fn write_print_pdf(dir: &std::path::Path, bytes: &[u8]) -> std::io::Result<std::path::PathBuf> {
-    use std::io::Write;
-    static PRINTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    for _ in 0..64 {
-        let n = PRINTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_add(1);
-        let path = dir.join(format!("GridCraft print {}-{n}.pdf", std::process::id()));
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        match options.open(&path) {
-            Ok(mut file) => {
-                file.write_all(bytes)?;
-                return Ok(path);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e),
-        }
-    }
-    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "no free print file name"))
 }
 
 fn icon() -> Option<egui::IconData> {
@@ -395,31 +385,30 @@ fn main() -> eframe::Result<()> {
 }
 
 #[cfg(test)]
-mod print_tests {
+mod packaging_tests {
+    use gridcraft_engine::io::FileKind;
+
+    /// The text between `start` and `end` that follows each `marker` in `text`, sorted (e.g. the
+    /// `xlsb` in `Classes\.xlsb\OpenWithProgids`).
+    fn extensions(text: &str, marker: &str, start: &str, end: char) -> Vec<String> {
+        let mut v: Vec<String> = text.split(marker).skip(1).filter_map(|s| s.split_once(start)?.1.split(end).next()).map(str::to_string).collect();
+        v.sort();
+        v
+    }
+
+    /// macOS Open With (`CFBundleDocumentTypes`) offers GridCraft for the same files as Windows
+    /// Open with, and GridCraft opens each of them. #321 added `.xlsb` and `.ods` on Windows and
+    /// Linux only.
     #[test]
-    fn print_pdfs_get_fresh_names_in_the_given_folder() {
-        let dir = std::env::temp_dir().join(format!("gridcraft-print-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let a = super::write_print_pdf(&dir, b"%PDF-1.4 a").unwrap();
-        let b = super::write_print_pdf(&dir, b"%PDF-1.4 b").unwrap();
-        assert_ne!(a, b);
-        assert!(a.starts_with(&dir) && a.extension().is_some_and(|e| e == "pdf"));
-        assert_eq!(std::fs::read(&b).unwrap(), b"%PDF-1.4 b");
-        assert!(super::write_print_pdf(&dir.join("missing"), b"x").is_err());
-        // A file (or symlink) already at the next name is skipped, never overwritten.
-        let pid = std::process::id();
-        let taken: Vec<_> = (1..=200).map(|n| dir.join(format!("GridCraft print {pid}-{n}.pdf"))).filter(|p| !p.exists()).take(3).collect();
-        for p in &taken {
-            std::fs::write(p, b"keep").unwrap();
+    fn macos_and_windows_offer_the_same_file_types() {
+        let plist = include_str!("../../../packaging/macos/Info.plist.in");
+        let wxs = include_str!("../../../packaging/windows/gridcraft.wxs");
+        let mac = extensions(plist, "<key>CFBundleTypeExtensions</key>", "<string>", '<');
+        let win = extensions(wxs, "Key=\"Software\\Classes\\.", "", '\\');
+        assert!(mac.iter().any(|e| e == "xlsx"), "Info.plist.in extensions not found: {mac:?}");
+        assert_eq!(mac, win);
+        for ext in &mac {
+            assert!(FileKind::from_path(&format!("book.{ext}")).is_some(), "GridCraft doesn't open .{ext}");
         }
-        let c = super::write_print_pdf(&dir, b"%PDF-1.4 c").unwrap();
-        assert!(taken.iter().all(|p| std::fs::read(p).unwrap() == b"keep"));
-        assert_eq!(std::fs::read(&c).unwrap(), b"%PDF-1.4 c");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&c).unwrap().permissions().mode() & 0o077, 0, "only the user can read it");
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
