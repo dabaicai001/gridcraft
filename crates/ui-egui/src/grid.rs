@@ -2485,6 +2485,7 @@ fn popup_dismissed(response: &egui::Response, was_open: bool) -> bool {
 
 fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool) {
     let Some((col, at)) = app.grid.filter_menu else { return };
+    let lang = app.ui.language;
     let Some(d) = app.session.active() else { return };
     let wb = d.wb.clone();
     let si = wb.active_sheet;
@@ -2523,20 +2524,20 @@ fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
     let response = area.show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(230.0);
-            if ui.button("↑  Sort Ascending").clicked() {
+            if ui.button(lang.tr("↑  Sort Ascending")).clicked() {
                 let _ = app.run("data.sortAscending", json!({"column": col_to_letters(col)}));
                 close = true;
             }
-            if ui.button("↓  Sort Descending").clicked() {
+            if ui.button(lang.tr("↓  Sort Descending")).clicked() {
                 let _ = app.run("data.sortDescending", json!({"column": col_to_letters(col)}));
                 close = true;
             }
             ui.separator();
-            ui.label(egui::RichText::new("Filter").strong());
+            ui.label(egui::RichText::new(lang.tr("Filter")).strong());
             let mut checks: Vec<(String, bool)> = ui.ctx().data_mut(|d| d.get_temp::<Vec<(String, bool)>>(key)).unwrap_or(values.clone());
             // A search narrows the list; Select All and Apply then only cover the matches.
             let mut search: String = ui.ctx().data_mut(|d| d.get_temp(search_key)).unwrap_or_default();
-            let field = ui.add(egui::TextEdit::singleline(&mut search).hint_text("Search").desired_width(f32::INFINITY));
+            let field = ui.add(egui::TextEdit::singleline(&mut search).hint_text(lang.tr("Search")).desired_width(f32::INFINITY));
             if !was_open {
                 field.request_focus();
             }
@@ -2544,7 +2545,7 @@ fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
             let matches = |v: &str| needle.is_empty() || v.to_lowercase().contains(&needle);
             let all = checks.iter().filter(|(v, _)| matches(v)).all(|(_, b)| *b);
             let mut all_new = all;
-            let label = if needle.is_empty() { "(Select All)" } else { "(Select All Search Results)" };
+            let label = lang.tr(if needle.is_empty() { "(Select All)" } else { "(Select All Search Results)" });
             if ui.checkbox(&mut all_new, label).changed() {
                 for c in checks.iter_mut().filter(|(v, _)| matches(v)) {
                     c.1 = all_new;
@@ -2562,11 +2563,11 @@ fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
             let checks: Vec<(String, bool)> = checks.iter().map(|(v, on)| (v.clone(), *on && matches(v))).collect();
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button("Clear Filter").clicked() {
+                if ui.button(lang.tr("Clear Filter")).clicked() {
                     let _ = app.run("data.filterBy", json!({"column": col_to_letters(col), "clear": true}));
                     close = true;
                 }
-                if ui.button("Apply").clicked() {
+                if ui.button(lang.tr("Apply")).clicked() {
                     let blanks = checks.iter().any(|(v, on)| v == "(Blanks)" && *on);
                     let vals: Vec<String> = checks.iter().filter(|(v, on)| *on && v != "(Blanks)").map(|(v, _)| v.clone()).collect();
                     let p = if checks.iter().all(|(_, b)| *b) {

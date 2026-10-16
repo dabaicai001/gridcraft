@@ -133,23 +133,24 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                 }
                                 resp.context_menu(|ui| {
                                     ui.set_min_width(180.0);
-                                    if ui.button("Insert Sheet").clicked() {
+                                    let lang = app.ui.language;
+                                    if ui.button(lang.tr("Insert Sheet")).clicked() {
                                         app.run_or_alert("home.insertSheet", json!({"before": i}));
                                     }
-                                    if ui.button("Delete").clicked() {
+                                    if ui.button(lang.tr("Delete")).clicked() {
                                         app.run_or_alert("home.deleteSheet", json!({"sheet": i}));
                                     }
-                                    if ui.button("Rename").clicked() {
+                                    if ui.button(lang.tr("Rename")).clicked() {
                                         app.grid.renaming_tab = Some(i);
                                         app.grid.rename_text = name.clone();
                                     }
-                                    if ui.button("Move or Copy…").clicked() {
+                                    if ui.button(lang.tr("Move or Copy…")).clicked() {
                                         app.open_dialog("moveSheet", json!({"sheet": i}));
                                     }
-                                    if ui.button("Duplicate").clicked() {
+                                    if ui.button(lang.tr("Duplicate")).clicked() {
                                         app.run_or_alert("sheet.move", json!({"sheet": i, "to": i + 1, "copy": true}));
                                     }
-                                    ui.menu_button("Tab Color", |ui| {
+                                    ui.menu_button(lang.tr("Tab Color"), |ui| {
                                         let colors = app.session.active().map(|d| d.wb.theme.colors).unwrap_or_default();
                                         if let Some(c) = crate::widgets::color_palette(ui, &colors, "No Color") {
                                             app.run_or_alert("sheet.tabColor", json!({"sheet": i, "color": c}));
@@ -157,18 +158,18 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                         }
                                     });
                                     ui.separator();
-                                    if ui.button("Hide").clicked() {
+                                    if ui.button(lang.tr("Hide")).clicked() {
                                         app.run_or_alert("sheet.hide", json!({"sheet": i}));
                                     }
-                                    if ui.button("Unhide…").clicked() {
+                                    if ui.button(lang.tr("Unhide…")).clicked() {
                                         app.run_or_alert("sheet.unhide", json!({}));
                                     }
                                     ui.separator();
                                     let protected = app.session.active().and_then(|d| d.wb.active().map(|s| s.is_protected())).unwrap_or(false);
-                                    if ui.button(if protected { "Unprotect Sheet…" } else { "Protect Sheet…" }).clicked() {
+                                    if ui.button(lang.tr(if protected { "Unprotect Sheet…" } else { "Protect Sheet…" })).clicked() {
                                         app.open_dialog(if protected { "unprotectSheet" } else { "protectSheet" }, json!({}));
                                     }
-                                    if ui.button("Select All Sheets").clicked() {
+                                    if ui.button(lang.tr("Select All Sheets")).clicked() {
                                         ui.close();
                                     }
                                 });
@@ -232,7 +233,9 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                 if let Some(d) = app.session.active() {
                     if d.wb.vba_project.is_some() {
                         ui.add_space(12.0);
-                        ui.label(egui::RichText::new("Macros preserved (not executed)").font(theme::ui_font(12.5)).color(t.danger));
+                        ui.label(
+                            egui::RichText::new(app.ui.language.tr("Macros preserved (not executed)")).font(theme::ui_font(12.5)).color(t.danger),
+                        );
                     }
                     if d.wb.calc.mode == gridcraft_engine::model::CalcMode::Manual {
                         ui.add_space(12.0);

@@ -972,7 +972,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "solver" => 460.0,
         _ => 380.0,
     };
-    let window = egui::Window::new(d.title.clone())
+    let window = egui::Window::new(app.ui.language.tr(&d.title).to_string())
         .id(egui::Id::new("dialog").with(&d.name))
         .collapsible(false)
         .resizable(false)
@@ -1044,7 +1044,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                         let name = d.values.get("alt").and_then(Json::as_str).unwrap_or("No picture selected");
                         ui.label(name);
                     } else {
-                        ui.label("Picture file path (PNG or JPEG):");
+                        ui.label(app.ui.language.tr("Picture file path (PNG or JPEG):"));
                         let mut path = d.values.get("path").and_then(Json::as_str).unwrap_or("").to_string();
                         if ui.text_edit_singleline(&mut path).changed() {
                             d.values.remove("base64");
@@ -1065,13 +1065,13 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                             d.values.insert("path".into(), json!(path));
                         }
                     }
-                    ui.label("Description (optional):");
+                    ui.label(app.ui.language.tr("Description (optional):"));
                     let mut alt = d.values.get("alt").and_then(Json::as_str).unwrap_or("").to_string();
                     if ui.text_edit_singleline(&mut alt).changed() {
                         d.values.insert("alt".into(), json!(alt));
                     }
                     if d.values.get("placement").and_then(Json::as_str) == Some("cell") {
-                        ui.label(egui::RichText::new("Fits inside the selected cell and moves with its content.").small());
+                        ui.label(egui::RichText::new(app.ui.language.tr("Fits inside the selected cell and moves with its content.")).small());
                     }
                     ok_cancel(ui, &mut confirm, &mut open);
                 }
@@ -1302,13 +1302,17 @@ fn paste_special_shortcuts(d: &mut Dialog, ctx: &egui::Context) {
 }
 
 fn ok_cancel(ui: &mut egui::Ui, confirm: &mut bool, open: &mut bool) {
+    let lang = crate::i18n::current(ui.ctx());
     ui.add_space(8.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let ok = ui.add(egui::Button::new(egui::RichText::new("   OK   ").color(Color32::WHITE)).fill(crate::theme::Tokens::get(ui.ctx()).accent));
+        let ok = ui.add(
+            egui::Button::new(egui::RichText::new(format!("   {}   ", lang.tr("OK"))).color(Color32::WHITE))
+                .fill(crate::theme::Tokens::get(ui.ctx()).accent),
+        );
         if ok.clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
             *confirm = true;
         }
-        if ui.button(" Cancel ").clicked() {
+        if ui.button(format!(" {} ", lang.tr("Cancel"))).clicked() {
             *open = false;
         }
     });
@@ -1321,12 +1325,13 @@ fn form(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) 
 
 /// Draws a dialog's `fields`, editing its values.
 fn form_fields(ui: &mut egui::Ui, d: &mut Dialog) {
+    let lang = crate::i18n::current(ui.ctx());
     egui::Grid::new("form").num_columns(1).spacing(vec2(8.0, 6.0)).show(ui, |ui| {
         for f in d.fields.clone() {
             match f {
                 Field::Text { key, label } => {
                     ui.vertical(|ui| {
-                        ui.label(label);
+                        ui.label(lang.tr(label));
                         let mut s = d
                             .values
                             .get(key)
@@ -1346,17 +1351,17 @@ fn form_fields(ui: &mut egui::Ui, d: &mut Dialog) {
                 Field::Password { key, label } => {
                     // Masked as typed (Excel shows dots); "Show password" reveals it on purpose.
                     ui.vertical(|ui| {
-                        ui.label(label);
+                        ui.label(lang.tr(label));
                         let mut s = d.values.get(key).and_then(Json::as_str).unwrap_or_default().to_string();
                         if ui.add(egui::TextEdit::singleline(&mut s).password(!d.show_password).desired_width(320.0)).changed() {
                             d.values.insert(key.into(), json!(s));
                         }
-                        ui.checkbox(&mut d.show_password, "Show password");
+                        ui.checkbox(&mut d.show_password, lang.tr("Show password"));
                     });
                 }
                 Field::Number { key, label } => {
                     ui.horizontal(|ui| {
-                        ui.label(label);
+                        ui.label(lang.tr(label));
                         let mut n = d.values.get(key).and_then(Json::as_f64).unwrap_or(0.0);
                         if ui.add(egui::DragValue::new(&mut n).speed(0.5)).changed() {
                             d.values.insert(key.into(), json!(n));
@@ -1365,10 +1370,10 @@ fn form_fields(ui: &mut egui::Ui, d: &mut Dialog) {
                 }
                 Field::Choice { key, label, options } => {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new(label).strong());
+                        ui.label(egui::RichText::new(lang.tr(label)).strong());
                         let cur = d.values.get(key).and_then(Json::as_str).unwrap_or("").to_string();
                         for (val, text) in options {
-                            if ui.radio(cur == val, text).clicked() {
+                            if ui.radio(cur == val, lang.tr(text)).clicked() {
                                 d.values.insert(key.into(), json!(val));
                             }
                         }
@@ -1376,12 +1381,12 @@ fn form_fields(ui: &mut egui::Ui, d: &mut Dialog) {
                 }
                 Field::Check { key, label } => {
                     let mut b = d.values.get(key).and_then(Json::as_bool).unwrap_or(false);
-                    if ui.checkbox(&mut b, label).changed() {
+                    if ui.checkbox(&mut b, lang.tr(label)).changed() {
                         d.values.insert(key.into(), json!(b));
                     }
                 }
                 Field::Note(t) => {
-                    ui.label(egui::RichText::new(t).small());
+                    ui.label(egui::RichText::new(lang.tr(&t)).small());
                 }
             }
             ui.end_row();
@@ -2291,15 +2296,16 @@ fn toolpak_defaults(sel: &str, tool: &str) -> Map<String, Json> {
 /// (through the dialog's command); a report that would replace data asks first.
 fn analysis_toolpak(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
     use gridcraft_engine::cmd::analysis::TOOLS;
+    let lang = app.ui.language;
     if d.values.get("askOverwrite").and_then(Json::as_bool) == Some(true) {
-        ui.label("The output range already holds data. Replace it with the report?");
+        ui.label(lang.tr("The output range already holds data. Replace it with the report?"));
         ui.horizontal(|ui| {
-            if ui.button("Replace").clicked() {
+            if ui.button(lang.tr("Replace")).clicked() {
                 d.values.remove("askOverwrite");
                 d.values.insert("overwrite".into(), json!(true));
                 *confirm = true;
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(lang.tr("Cancel")).clicked() {
                 d.values.remove("askOverwrite");
             }
         });
@@ -2307,12 +2313,12 @@ fn analysis_toolpak(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confi
     }
     let tool = d.values.get("tool").and_then(Json::as_str).unwrap_or("").to_string();
     let Some((_, label)) = TOOLS.iter().find(|(id, _)| *id == tool) else {
-        ui.label(egui::RichText::new("Analysis Tools").strong());
+        ui.label(egui::RichText::new(lang.tr("Analysis Tools")).strong());
         let pick = d.values.get("pick").and_then(Json::as_str).unwrap_or("").to_string();
         let mut chosen = false;
         egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
             for (id, label) in TOOLS {
-                let r = ui.selectable_label(pick == *id, *label);
+                let r = ui.selectable_label(pick == *id, lang.tr(label));
                 if r.clicked() {
                     d.values.insert("pick".into(), json!(id));
                 }
@@ -2334,11 +2340,11 @@ fn analysis_toolpak(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confi
     d.fields = toolpak_fields(&tool);
     form_fields(ui, d);
     ui.separator();
-    ui.label(egui::RichText::new("Output options").strong());
+    ui.label(egui::RichText::new(lang.tr("Output options")).strong());
     let to = d.values.get("outputTo").and_then(Json::as_str).unwrap_or("newSheet").to_string();
     for (key, choice, text_label) in [("output", "range", "Output Range:"), ("newSheet", "newSheet", "New Worksheet Ply:")] {
         ui.horizontal(|ui| {
-            if ui.radio(to == choice, text_label).clicked() {
+            if ui.radio(to == choice, lang.tr(text_label)).clicked() {
                 d.values.insert("outputTo".into(), json!(choice));
             }
             let mut t = d.values.get(key).and_then(Json::as_str).unwrap_or("").to_string();

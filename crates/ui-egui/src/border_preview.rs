@@ -9,6 +9,7 @@ use crate::theme::{self, Tokens};
 /// A labelled menu button with a two-by-two diagram to distinguish inside edges
 /// from the selection outline. Labels stay available to accessibility tools.
 pub(crate) fn preset_button(ui: &mut Ui, label: &str, preset: &str) -> Response {
+    let label = crate::i18n::current(ui.ctx()).tr(label);
     let response = ui.add(egui::Button::new("").frame(false).min_size(vec2(254.0, 26.0)));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
     let t = Tokens::get(ui.ctx());
@@ -53,7 +54,7 @@ pub(crate) fn preset_button(ui: &mut Ui, label: &str, preset: &str) -> Response 
 /// and explicit border colors faithful in both light and dark application themes.
 pub(crate) fn sample(ui: &mut Ui, borders: &Borders, theme: &Theme) {
     ui.add_space(8.0);
-    ui.label("Preview");
+    ui.label(crate::i18n::current(ui.ctx()).tr("Preview"));
     let (area, response) = ui.allocate_exact_size(vec2(248.0, 104.0), Sense::hover());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Border preview"));
     let t = Tokens::get(ui.ctx());
