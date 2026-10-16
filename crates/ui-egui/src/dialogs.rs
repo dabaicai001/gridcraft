@@ -30,6 +30,8 @@ pub struct Dialog {
     pub values: Map<String, Json>,
     /// Command to run on OK (params = values, transformed by `build`).
     pub command: Option<&'static str>,
+    /// One line under the title saying what the dialog does, in the dim small style.
+    pub hint: Option<String>,
     pub tab: String,
     pub search: String,
     pub list_index: usize,
@@ -47,6 +49,12 @@ impl Dialog {
         &self.name
     }
 
+    /// The one-line description shown under the title.
+    pub fn hint(mut self, text: &str) -> Dialog {
+        self.hint = Some(text.into());
+        self
+    }
+
     fn form(name: &str, title: &str, command: &'static str, fields: Vec<Field>, defaults: Json) -> Dialog {
         Dialog {
             name: name.into(),
@@ -54,6 +62,7 @@ impl Dialog {
             fields,
             values: defaults.as_object().cloned().unwrap_or_default(),
             command: Some(command),
+            hint: None,
             tab: String::new(),
             search: String::new(),
             list_index: 0,
@@ -72,6 +81,7 @@ impl Dialog {
             fields: vec![],
             values: defaults.as_object().cloned().unwrap_or_default(),
             command: None,
+            hint: None,
             tab: String::new(),
             search: String::new(),
             list_index: 0,
@@ -611,6 +621,21 @@ impl Dialog {
                 ],
                 json!({"range": sel, "text": String::new(), "at": "start", "position": 1}),
             ),
+            "fuzzyFilter" => {
+                let mut d = Dialog::form(
+                    "fuzzyFilter",
+                    "Fuzzy Filter",
+                    "data.filterFuzzy",
+                    vec![Text { key: "keywords", label: "Keywords (space-separated):" }],
+                    json!({"keywords": String::new()}),
+                )
+                .hint("Keep the rows of this column whose value contains any keyword; leave it empty to clear the filter");
+                // The column the filter list was opened on.
+                if let Some(c) = params.get("column") {
+                    d.values.insert("column".into(), c.clone());
+                }
+                d
+            }
             "dataValidation" => Dialog::form(
                 "dataValidation",
                 "Data Validation",
@@ -970,18 +995,22 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "recommendedCharts" => 600.0,
         "analysisToolPak" => 420.0,
         "solver" => 460.0,
+        "fuzzyFilter" | "rowHeight" | "columnWidth" | "defaultWidth" | "renameSheet" => 340.0,
         _ => 380.0,
     };
+    // Auto-sized: the box is exactly as tall as its content, so a short dialog has no dead space
+    // (egui's window default is a 420-tall box). The content width is pinned so long labels and
+    // notes wrap inside it instead of stretching the window.
     let window = egui::Window::new(app.ui.language.tr(&d.title).to_string())
         .id(egui::Id::new("dialog").with(&d.name))
         .collapsible(false)
-        .resizable(false)
+        .auto_sized()
         .default_width(width)
         .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, -40.0))
         .open(&mut win_open);
     let window = if d.name == "insertPicture" { window.default_height(240.0) } else { window };
     window.show(ctx, |ui| {
-            ui.set_min_width(width - 20.0);
+            ui.set_width_range((width - 20.0)..=(width - 20.0));
             match d.name.as_str() {
                 "formatCells" => format_cells(app, ui, &mut d, &mut confirm),
                 "insertFunction" => insert_function(app, ui, &mut d, &mut confirm),
@@ -1303,22 +1332,36 @@ fn paste_special_shortcuts(d: &mut Dialog, ctx: &egui::Context) {
 
 fn ok_cancel(ui: &mut egui::Ui, confirm: &mut bool, open: &mut bool) {
     let lang = crate::i18n::current(ui.ctx());
-    ui.add_space(8.0);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    ui.add_space(12.0);
+    ui.separator();
+    ui.add_space(10.0);
+    // TOP, not Center: a centred cross-axis makes the child claim the whole available height,
+    // which stretches an auto-sized window (and pushes its buttons to the bottom).
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+        // Both buttons share a width, so the pair reads as one deliberate row.
         let ok = ui.add(
             egui::Button::new(egui::RichText::new(format!("   {}   ", lang.tr("OK"))).color(Color32::WHITE))
-                .fill(crate::theme::Tokens::get(ui.ctx()).accent),
+                .fill(t.accent)
+                .min_size(vec2(76.0, 26.0)),
         );
         if ok.clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
             *confirm = true;
         }
-        if ui.button(format!(" {} ", lang.tr("Cancel"))).clicked() {
+        if ui.add(egui::Button::new(format!(" {} ", lang.tr("Cancel"))).min_size(vec2(76.0, 26.0))).clicked() {
             *open = false;
         }
     });
 }
 
 fn form(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    // The one-line description under the title, in the dim small style.
+    if let Some(hint) = d.hint.clone() {
+        let t = crate::theme::Tokens::get(ui.ctx());
+        ui.add_space(2.0);
+        ui.label(egui::RichText::new(crate::i18n::current(ui.ctx()).tr(&hint)).small().color(t.text_dim));
+        ui.add_space(10.0);
+    }
     form_fields(ui, d);
     ok_cancel(ui, confirm, open);
 }
@@ -1326,72 +1369,79 @@ fn form(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) 
 /// Draws a dialog's `fields`, editing its values.
 fn form_fields(ui: &mut egui::Ui, d: &mut Dialog) {
     let lang = crate::i18n::current(ui.ctx());
-    egui::Grid::new("form").num_columns(1).spacing(vec2(8.0, 6.0)).show(ui, |ui| {
-        for f in d.fields.clone() {
-            match f {
-                Field::Text { key, label } => {
-                    ui.vertical(|ui| {
-                        ui.label(lang.tr(label));
-                        let mut s = d
-                            .values
-                            .get(key)
-                            .map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| if v.is_null() { String::new() } else { v.to_string() }))
-                            .unwrap_or_default();
-                        let multiline = key == "text";
-                        let r = if multiline {
-                            ui.add(egui::TextEdit::multiline(&mut s).desired_rows(4).desired_width(320.0))
-                        } else {
-                            ui.add(egui::TextEdit::singleline(&mut s).desired_width(320.0))
-                        };
-                        if r.changed() {
-                            d.values.insert(key.into(), json!(s));
-                        }
-                    });
-                }
-                Field::Password { key, label } => {
-                    // Masked as typed (Excel shows dots); "Show password" reveals it on purpose.
-                    ui.vertical(|ui| {
-                        ui.label(lang.tr(label));
-                        let mut s = d.values.get(key).and_then(Json::as_str).unwrap_or_default().to_string();
-                        if ui.add(egui::TextEdit::singleline(&mut s).password(!d.show_password).desired_width(320.0)).changed() {
-                            d.values.insert(key.into(), json!(s));
-                        }
-                        ui.checkbox(&mut d.show_password, lang.tr("Show password"));
-                    });
-                }
-                Field::Number { key, label } => {
-                    ui.horizontal(|ui| {
-                        ui.label(lang.tr(label));
-                        let mut n = d.values.get(key).and_then(Json::as_f64).unwrap_or(0.0);
-                        if ui.add(egui::DragValue::new(&mut n).speed(0.5)).changed() {
-                            d.values.insert(key.into(), json!(n));
-                        }
-                    });
-                }
-                Field::Choice { key, label, options } => {
-                    ui.vertical(|ui| {
-                        ui.label(egui::RichText::new(lang.tr(label)).strong());
-                        let cur = d.values.get(key).and_then(Json::as_str).unwrap_or("").to_string();
-                        for (val, text) in options {
-                            if ui.radio(cur == val, lang.tr(text)).clicked() {
-                                d.values.insert(key.into(), json!(val));
-                            }
-                        }
-                    });
-                }
-                Field::Check { key, label } => {
-                    let mut b = d.values.get(key).and_then(Json::as_bool).unwrap_or(false);
-                    if ui.checkbox(&mut b, lang.tr(label)).changed() {
-                        d.values.insert(key.into(), json!(b));
+    // A plain vertical stack: an egui Grid reports the whole available height back to an
+    // auto-sized window, which would stretch the box (and its buttons to the bottom).
+    for f in d.fields.clone() {
+        match f {
+            Field::Text { key, label } => {
+                ui.vertical(|ui| {
+                    ui.label(lang.tr(label));
+                    ui.add_space(2.0);
+                    let mut s = d
+                        .values
+                        .get(key)
+                        .map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| if v.is_null() { String::new() } else { v.to_string() }))
+                        .unwrap_or_default();
+                    let multiline = key == "text";
+                    let r = if multiline {
+                        ui.add(egui::TextEdit::multiline(&mut s).desired_rows(4).desired_width(f32::INFINITY))
+                    } else {
+                        ui.add(egui::TextEdit::singleline(&mut s).desired_width(f32::INFINITY))
+                    };
+                    if r.changed() {
+                        d.values.insert(key.into(), json!(s));
                     }
-                }
-                Field::Note(t) => {
-                    ui.label(egui::RichText::new(lang.tr(&t)).small());
+                    ui.add_space(2.0);
+                });
+            }
+            Field::Password { key, label } => {
+                // Masked as typed (Excel shows dots); "Show password" reveals it on purpose.
+                ui.vertical(|ui| {
+                    ui.label(lang.tr(label));
+                    ui.add_space(2.0);
+                    let mut s = d.values.get(key).and_then(Json::as_str).unwrap_or_default().to_string();
+                    if ui.add(egui::TextEdit::singleline(&mut s).password(!d.show_password).desired_width(f32::INFINITY)).changed() {
+                        d.values.insert(key.into(), json!(s));
+                    }
+                    ui.add_space(2.0);
+                    ui.checkbox(&mut d.show_password, lang.tr("Show password"));
+                });
+            }
+            Field::Number { key, label } => {
+                ui.horizontal(|ui| {
+                    ui.label(lang.tr(label));
+                    let mut n = d.values.get(key).and_then(Json::as_f64).unwrap_or(0.0);
+                    if ui.add(egui::DragValue::new(&mut n).speed(0.5)).changed() {
+                        d.values.insert(key.into(), json!(n));
+                    }
+                });
+            }
+            Field::Choice { key, label, options } => {
+                ui.vertical(|ui| {
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new(lang.tr(label)).strong());
+                    let cur = d.values.get(key).and_then(Json::as_str).unwrap_or("").to_string();
+                    for (val, text) in options {
+                        if ui.radio(cur == val, lang.tr(text)).clicked() {
+                            d.values.insert(key.into(), json!(val));
+                        }
+                    }
+                    ui.add_space(2.0);
+                });
+            }
+            Field::Check { key, label } => {
+                let mut b = d.values.get(key).and_then(Json::as_bool).unwrap_or(false);
+                if ui.checkbox(&mut b, lang.tr(label)).changed() {
+                    d.values.insert(key.into(), json!(b));
                 }
             }
-            ui.end_row();
+            Field::Note(t) => {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(lang.tr(&t)).small().color(crate::theme::Tokens::get(ui.ctx()).text_dim));
+            }
         }
-    });
+        ui.add_space(8.0);
+    }
 }
 
 /// Help ▸ About GridCraft: the app, its contributors and the AI models that helped. The credits
@@ -1932,7 +1982,7 @@ fn name_manager(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mu
         });
     });
     ui.add_space(8.0);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
         if ui.button(" Close ").clicked() {
             *open = false;
         }
@@ -2457,7 +2507,7 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
         .small(),
     );
     ui.add_space(8.0);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
         let solve =
             ui.add(egui::Button::new(egui::RichText::new("  Solve  ").color(Color32::WHITE)).fill(crate::theme::Tokens::get(ui.ctx()).accent));
         if solve.clicked() && !text(d, "objective").trim().is_empty() {

@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (Simplified Chinese: Format and Fill menu labels) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (Simplified Chinese: filter list and dialogs) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Per-language status against Excel, which ships its UI in dozens of languages (Windows language
 packs cover 100+), with localized function names, argument separators, number and date formats,
@@ -43,7 +43,7 @@ separators, number/date formats, machine translation with agent review, and scri
 | Language | Code | UI strings translated | Dialogs / tooltips / help | Script support | Native review | Status | Estimate to full |
 |---|---|---|---|---|---|---|---|
 | English | en | ~2,200 / ~2,200 (100%, source) | yes | Latin: yes | yes | full | — |
-| Simplified Chinese (Mandarin) | zh-Hans | 558 (~25%) | no | CJK system-font fallback (#38); IME unverified; PDF can't export | no | menus only | 8–13 h |
+| Simplified Chinese (Mandarin) | zh-Hans | 825 (~38%) | no | CJK system-font fallback (#38); IME unverified; PDF can't export | no | menus + dialogs | 8–13 h |
 | Spanish | es | 0 (0%) | no | Latin: yes | no | none | 6–10 h |
 | Hindi | hi | 0 (0%) | no | Devanagari: **no shaping** | no | none | 12–18 h |
 | Arabic | ar | 0 (0%) | no | **no shaping, no RTL UI**; Sheet Right-to-Left mirrors the grid (#146) | no | none | 25–35 h |
@@ -77,6 +77,7 @@ language (none so far) and of localized function names.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | minor | zh: dialogs taken off English literals (`i18n/zh.rs`, 825 labels, ~38%) — titles, form fields, choice options and notes across every dialog; the filter list's Invert/Duplicates/Unique Values/Fuzzy Filter labels |
 | 2026-10-16 | minor | zh: Format and Fill menu labels translated (`i18n/zh.rs`, 558 labels): Hide/Unhide/Rename/Move or Copy Sheet and Series/Fill Blanks/Insert Text into Cells, including the dialog titles they open |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |
 | 2026-10-11 | minor | Sheet Right-to-Left mirrors the grid (#146) |

@@ -31,6 +31,7 @@ pub mod selection_glide;
 pub mod tabs;
 pub mod text_box;
 pub mod theme;
+pub mod vip;
 pub mod widgets;
 
 use std::collections::HashMap;

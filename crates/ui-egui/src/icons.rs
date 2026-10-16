@@ -129,6 +129,8 @@ pub enum Icon {
     OpenFolder,
     Info,
     Print,
+    /// The membership marker: a blue tile with a slanted white "V".
+    Vip,
 }
 
 struct G<'a> {
@@ -705,6 +707,12 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, c: Color32) {
             g.line(&[(4.0, 11.5), (1.5, 11.5), (1.5, 5.5), (14.5, 5.5), (14.5, 11.5), (12.0, 11.5)], c, 1.1);
             g.line(&[(4.5, 9.0), (4.5, 14.5), (11.5, 14.5), (11.5, 9.0), (4.5, 9.0)], c, 1.1);
             g.circle(12.3, 7.6, 0.6, Some(c), None);
+        }
+        Icon::Vip => {
+            // A blue tile with a slanted white "V" (the vertex leans right of the arms' midpoint).
+            g.rect(1.0, 1.0, 14.0, 14.0, Some(BLUE), None);
+            g.line(&[(4.4, 4.6), (10.0, 11.8)], Color32::WHITE, 2.1);
+            g.line(&[(10.0, 11.8), (13.0, 4.2)], Color32::WHITE, 2.1);
         }
     }
 }

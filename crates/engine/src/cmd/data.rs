@@ -13,10 +13,12 @@ use crate::selection::current_region;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("data.sortAscending", "Sort A to Z", ["Data", "Sort & Filter"], None, "{range?, column?: \"B\"}", has_doc, |s, p| quick_sort(
-            s, p, true
-        )),
-        cmd!("data.sortDescending", "Sort Z to A", ["Data", "Sort & Filter"], None, "{range?, column?}", has_doc, |s, p| quick_sort(s, p, false)),
+        cmd!("data.sortAscending", "Sort A to Z", ["Data", "Sort & Filter"], None, "{range?, column?: \"B\", header?: bool}", has_doc, |s, p| {
+            quick_sort(s, p, true)
+        }),
+        cmd!("data.sortDescending", "Sort Z to A", ["Data", "Sort & Filter"], None, "{range?, column?: \"B\", header?: bool}", has_doc, |s, p| {
+            quick_sort(s, p, false)
+        }),
         cmd!(
             "data.sort",
             "Sort…",
@@ -43,6 +45,33 @@ pub fn specs() -> Vec<CommandSpec> {
             "{column: \"B\" (or 0-based offset), values?: [..], blanks?: bool, custom?: {op: \">\", value: \"10\", op2?, value2?, and?}, top?: {count, bottom?, percent?}, aboveAverage?: bool, clear?: bool}",
             has_doc,
             filter_by
+        ),
+        cmd!(
+            "data.filterDuplicates",
+            "Duplicates",
+            [],
+            None,
+            "{column?: \"B\"} — keeps only the rows whose value in the column appears more than once",
+            has_doc,
+            |s, p| filter_repeat(s, p, true)
+        ),
+        cmd!(
+            "data.filterUnique",
+            "Unique Values",
+            [],
+            None,
+            "{column?: \"B\"} — keeps only the rows whose value in the column appears exactly once",
+            has_doc,
+            |s, p| filter_repeat(s, p, false)
+        ),
+        cmd!(
+            "data.filterFuzzy",
+            "Fuzzy Filter",
+            [],
+            None,
+            "{column?: \"B\", keywords: \"east north\"} — keeps the rows whose value contains any keyword (space-separated); no keywords clears the column's filter",
+            has_doc,
+            filter_fuzzy
         ),
         cmd!("data.clearFilter", "Clear", ["Data", "Sort & Filter"], None, "{}", has_doc, clear_filter),
         cmd!("data.reapply", "Reapply", ["Data", "Sort & Filter"], None, "{}", has_doc, reapply),
@@ -250,7 +279,9 @@ fn quick_sort(s: &mut Session, p: &Json, asc: bool) -> Result<Json> {
     let col = col_param(p.get("column"), r.start.col).unwrap_or(s.doc()?.selection.active.col).clamp(r.start.col, r.end.col);
     let d = s.doc()?;
     let sh = d.wb.active().ok_or(EngineError::NoDocument)?;
-    let header = guess_header(&d.wb, sh, r);
+    // `header` overrides the guess: the filter list sorts inside its AutoFilter range, whose first
+    // row is the title row, and it must never join the sort.
+    let header = bool_param(p, "header").unwrap_or_else(|| guess_header(&d.wb, sh, r));
     do_sort(s, r, header, vec![SortKey { col, desc: !asc, by: "values".into(), list: None }], false, false)
 }
 
@@ -542,20 +573,7 @@ fn toggle_filter(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn filter_by(s: &mut Session, p: &Json) -> Result<Json> {
-    let sheet = s.doc()?.wb.active_sheet;
-    let Some(sh) = s.doc()?.wb.sheet(sheet) else { return Err(EngineError::NoDocument) };
-    let af = match &sh.autofilter {
-        Some(a) => a.clone(),
-        None => {
-            toggle_filter(s, &json!({}))?;
-            s.doc()?.wb.sheet(sheet).and_then(|sh| sh.autofilter.clone()).ok_or_else(|| EngineError::Other("no filter".into()))?
-        }
-    };
-    let col = col_param(p.get("column"), af.range.start.col).ok_or_else(|| bad("data.filterBy", "missing `column`"))?;
-    if col < af.range.start.col || col > af.range.end.col {
-        return Err(bad("data.filterBy", "column outside the filter range"));
-    }
-    let off = col - af.range.start.col;
+    let (sheet, _af, _col, off) = filter_target(s, p, "data.filterBy")?;
     let crit = if bool_param(p, "clear").unwrap_or(false) {
         None
     } else if let Some(vals) = p.get("values").and_then(Json::as_array) {
@@ -576,6 +594,31 @@ fn filter_by(s: &mut Session, p: &Json) -> Result<Json> {
     } else {
         bool_param(p, "aboveAverage").map(FilterCriterion::AboveAverage)
     };
+    write_filter(s, sheet, off, crit)
+}
+
+/// The active sheet, its AutoFilter (created on demand when the sheet has none) and the column a
+/// filter command works on: the absolute column plus its offset inside the filter range.
+fn filter_target(s: &mut Session, p: &Json, cmd: &str) -> Result<(usize, AutoFilter, u32, u32)> {
+    let sheet = s.doc()?.wb.active_sheet;
+    let Some(sh) = s.doc()?.wb.sheet(sheet) else { return Err(EngineError::NoDocument) };
+    let af = match &sh.autofilter {
+        Some(a) => a.clone(),
+        None => {
+            toggle_filter(s, &json!({}))?;
+            s.doc()?.wb.sheet(sheet).and_then(|sh| sh.autofilter.clone()).ok_or_else(|| EngineError::Other("no filter".into()))?
+        }
+    };
+    let col = col_param(p.get("column"), af.range.start.col).ok_or_else(|| bad(cmd, "missing `column`"))?;
+    if col < af.range.start.col || col > af.range.end.col {
+        return Err(bad(cmd, "column outside the filter range"));
+    }
+    let off = col - af.range.start.col;
+    Ok((sheet, af, col, off))
+}
+
+/// Replaces one column's filter criterion (`None` clears it) and re-applies the filter.
+fn write_filter(s: &mut Session, sheet: usize, off: u32, crit: Option<FilterCriterion>) -> Result<Json> {
     edit(s, |cx| {
         let sh = cx.sheet_mut(sheet)?;
         if let Some(a) = sh.autofilter.as_mut() {
@@ -590,6 +633,68 @@ fn filter_by(s: &mut Session, p: &Json) -> Result<Json> {
     })?;
     let hidden = s.doc()?.wb.sheet(sheet).map(|sh| sh.rows.values().filter(|r| r.hidden).count()).unwrap_or(0);
     Ok(json!({"hiddenRows": hidden}))
+}
+
+/// Counts the display values of a filter column's data rows, in first-seen order, with the blank
+/// count apart: what the filter list's Duplicates and Unique Values keep. Counting is
+/// case-insensitive, as the value criterion's matching is.
+fn value_counts(wb: &Workbook, sh: &Sheet, af: &AutoFilter, col: u32) -> (Vec<(String, usize)>, usize) {
+    let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    let mut blanks = 0usize;
+    for row in af.range.start.row + 1..=af.range.end.row.min(af.range.start.row + 1_000_000) {
+        let c = CellRef::new(row, col);
+        let v = sh.value(c);
+        if v.is_empty() {
+            blanks += 1;
+            continue;
+        }
+        let text = crate::display::cell_text(wb, sh, c);
+        let slot = *at.entry(text.to_lowercase()).or_insert_with(|| {
+            counts.push((text, 0));
+            counts.len() - 1
+        });
+        if let Some((_, n)) = counts.get_mut(slot) {
+            *n += 1;
+        }
+    }
+    (counts, blanks)
+}
+
+/// The filter list's Duplicates / Unique Values: keeps the rows whose value in the column repeats
+/// (`duplicates`) or never repeats.
+fn filter_repeat(s: &mut Session, p: &Json, duplicates: bool) -> Result<Json> {
+    let cmd = if duplicates { "data.filterDuplicates" } else { "data.filterUnique" };
+    let (sheet, af, col, off) = filter_target(s, p, cmd)?;
+    let d = s.doc()?;
+    let sh = d.wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
+    let (counts, blanks) = value_counts(&d.wb, sh, &af, col);
+    let keep: Vec<String> = counts.iter().filter(|(_, n)| if duplicates { *n > 1 } else { *n == 1 }).map(|(t, _)| t.clone()).collect();
+    let keep_blanks = if duplicates { blanks > 1 } else { blanks == 1 };
+    write_filter(s, sheet, off, Some(FilterCriterion::Values { values: keep, blanks: keep_blanks }))
+}
+
+/// The filter list's Fuzzy Filter: keeps the rows whose value in the column contains any of the
+/// space-separated keywords. No keywords clears the column's filter. The result is an ordinary
+/// value criterion, so it round-trips through XLSX and the popup's checkboxes read it back.
+fn filter_fuzzy(s: &mut Session, p: &Json) -> Result<Json> {
+    let (sheet, af, col, off) = filter_target(s, p, "data.filterFuzzy")?;
+    let words: Vec<String> = str_param(p, "keywords").map(|k| k.split_whitespace().map(str::to_lowercase).collect()).unwrap_or_default();
+    if words.is_empty() {
+        return write_filter(s, sheet, off, None);
+    }
+    let d = s.doc()?;
+    let sh = d.wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
+    let (counts, _blanks) = value_counts(&d.wb, sh, &af, col);
+    let keep: Vec<String> = counts
+        .iter()
+        .filter(|(t, _)| {
+            let t = t.to_lowercase();
+            words.iter().any(|w| t.contains(w.as_str()))
+        })
+        .map(|(t, _)| t.clone())
+        .collect();
+    write_filter(s, sheet, off, Some(FilterCriterion::Values { values: keep, blanks: false }))
 }
 
 /// Does a value pass a custom comparison (`>`, `=*abc*`, `<>x`…)?
@@ -1813,5 +1918,64 @@ mod tests {
         assert_eq!(split_delimited("a,b,,c", &[','], false, '"'), ["a", "b", "", "c"]);
         assert_eq!(split_delimited("a,b,,c", &[','], true, '"'), ["a", "b", "c"]);
         assert_eq!(split_delimited("\"x,y\",z", &[','], false, '"'), ["x,y", "z"]);
+    }
+
+    /// A1 title, A2:A5 = x, y, x, z, with an AutoFilter over A1:A5.
+    fn filtered_column() -> Session {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("cell.set", json!({"cell": "A1", "input": "zzz"})).unwrap();
+        for (i, v) in ["x", "y", "x", "z"].iter().enumerate() {
+            s.execute("cell.set", json!({"cell": format!("A{}", i + 2), "input": v})).unwrap();
+        }
+        s.execute("data.filter", json!({"range": "A1:A5"})).unwrap();
+        s
+    }
+
+    /// Which of the 0-based rows 0..=4 (title first) are hidden.
+    fn hidden_rows(s: &Session) -> Vec<bool> {
+        let sh = s.doc().unwrap().wb.active().unwrap();
+        (0..=4).map(|r| sh.rows.get(&r).is_some_and(|l| l.hidden)).collect()
+    }
+
+    fn column_text(s: &Session) -> Vec<String> {
+        let d = s.doc().unwrap();
+        let sh = d.wb.active().unwrap();
+        (0..=4).map(|r| crate::display::cell_text(&d.wb, sh, CellRef::new(r, 0))).collect()
+    }
+
+    #[test]
+    fn duplicates_unique_and_fuzzy_keep_the_matching_rows_and_never_the_title() {
+        let mut s = filtered_column();
+        s.execute("data.filterDuplicates", json!({"column": "A"})).unwrap();
+        assert_eq!(hidden_rows(&s), [false, false, true, false, true], "the two x rows stay; y and z go");
+        s.execute("data.filterUnique", json!({"column": "A"})).unwrap();
+        assert_eq!(hidden_rows(&s), [false, true, false, true, false], "now y and z stay; the x rows go");
+        s.execute("data.filterFuzzy", json!({"column": "A", "keywords": "x z"})).unwrap();
+        assert_eq!(hidden_rows(&s), [false, false, true, false, false], "x and z rows stay; y goes");
+        // No keywords clears the column's filter instead of matching nothing.
+        s.execute("data.filterFuzzy", json!({"column": "A", "keywords": "  "})).unwrap();
+        assert_eq!(hidden_rows(&s), [false; 5]);
+    }
+
+    #[test]
+    fn sorting_inside_the_filter_range_keeps_the_title_row_put() {
+        let mut s = filtered_column();
+        s.execute("data.sortAscending", json!({"range": "A1:A5", "column": "A", "header": true})).unwrap();
+        assert_eq!(column_text(&s), ["zzz", "x", "x", "y", "z"], "the title row never joins the sort");
+        // The header guess still applies when the caller says nothing.
+        let mut s = filtered_column();
+        s.execute("data.sortAscending", json!({"range": "A1:A5", "column": "A"})).unwrap();
+        assert_eq!(column_text(&s), ["x", "x", "y", "z", "zzz"]);
+    }
+
+    #[test]
+    fn filter_list_commands_resolve_their_column_like_filterby() {
+        let mut s = filtered_column();
+        assert!(s.execute("data.filterDuplicates", json!({})).is_err(), "no column is an error, not a guess");
+        assert!(s.execute("data.filterUnique", json!({"column": "C"})).is_err(), "outside the filter range");
+        // An offset works, as in data.filterBy.
+        s.execute("data.filterDuplicates", json!({"column": 0})).unwrap();
+        assert_eq!(hidden_rows(&s), [false, false, true, false, true]);
     }
 }

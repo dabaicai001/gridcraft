@@ -335,6 +335,10 @@ fn control_keytip(app: &SheetApp, ui: &Ui, response: &egui::Response, id: &str) 
     if let Some(sequence) = keytip_table::control_badge(app.keytips.prefix().unwrap_or_default(), id) {
         keytip(app, ui, sequence, response.rect.center_bottom());
     }
+    // The membership marker sits on the control permanently, keytips only while Alt is armed.
+    if crate::vip::is_vip(id) {
+        crate::vip::paint(ui, response.rect);
+    }
 }
 
 /// Paint the single badge for a menu anchor whose popup items run `targets`.
@@ -480,6 +484,10 @@ fn menu_items(app: &mut SheetApp, ui: &mut Ui, items: &[(&str, &str, serde_json:
         }
         let lang = app.ui.language;
         let response = ui.add(egui::Button::new(lang.tr(label)).frame(false).min_size(vec2(220.0, 22.0)));
+        if crate::vip::is_vip(id) {
+            // Inset from the right: the keytip badge takes that corner while Alt is armed.
+            crate::vip::paint(ui, response.rect.shrink2(egui::vec2(24.0, 0.0)));
+        }
         if let Some(sequence) = keytip_table::item_letter(app.keytips.prefix().unwrap_or_default(), id) {
             keytip(app, ui, sequence, pos2(response.rect.right() - 10.0, response.rect.center().y));
         }

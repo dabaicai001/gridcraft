@@ -2517,21 +2517,45 @@ fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
     }
     let wb = app.session.active().map(|d| d.wb.clone()).unwrap_or(wb);
     let values = gridcraft_engine::cmd::data::filter_values(&wb, si, col);
+    // The AutoFilter range, whose first row is the title row: sorting works inside it and never
+    // moves the title.
+    let af_range = wb.sheet(si).and_then(|sh| sh.autofilter.as_ref()).map(|a| a.range);
     let key = egui::Id::new(("filter_sel", col));
     let search_key = egui::Id::new(("filter_search", col));
     let mut close = false;
-    let area = egui::Area::new(egui::Id::new("filter_menu")).fixed_pos(at + vec2(-180.0, 10.0)).order(egui::Order::Foreground);
+    // The popup opens left of the header it belongs to, and flips to its right when there is no
+    // room (a column near the left edge would otherwise push it off-screen), as Excel does. Its
+    // top is kept on screen for a header near the bottom.
+    let screen = ui.ctx().content_rect();
+    let width = 230.0;
+    let x = if at.x - width - 10.0 >= screen.left() { at.x - width - 10.0 } else { (at.x + 24.0).min(screen.right() - width - 4.0) };
+    let y = (at.y + 10.0).min((screen.bottom() - 240.0).max(screen.top() + 4.0));
+    let area = egui::Area::new(egui::Id::new("filter_menu")).fixed_pos(pos2(x, y)).order(egui::Order::Foreground);
     let response = area.show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
-            ui.set_width(230.0);
-            if ui.button(lang.tr("↑  Sort Ascending")).clicked() {
-                let _ = app.run("data.sortAscending", json!({"column": col_to_letters(col)}));
-                close = true;
-            }
-            if ui.button(lang.tr("↓  Sort Descending")).clicked() {
-                let _ = app.run("data.sortDescending", json!({"column": col_to_letters(col)}));
-                close = true;
-            }
+            ui.set_width(width);
+            // One compact row of icon buttons, as the reference UI lays the sort out.
+            ui.horizontal(|ui| {
+                ui.add_space(4.0);
+                for asc in [true, false] {
+                    let label = if asc { "Ascending" } else { "Descending" };
+                    let r = crate::widgets::small_button(
+                        ui,
+                        if asc { crate::icons::Icon::SortAsc } else { crate::icons::Icon::SortDesc },
+                        label,
+                        label,
+                        false,
+                    );
+                    if r.clicked() {
+                        let mut p = json!({"column": col_to_letters(col), "header": true});
+                        if let Some(range) = af_range {
+                            p["range"] = json!(range.a1());
+                        }
+                        let _ = app.run(if asc { "data.sortAscending" } else { "data.sortDescending" }, p);
+                        close = true;
+                    }
+                }
+            });
             ui.separator();
             ui.label(egui::RichText::new(lang.tr("Filter")).strong());
             let mut checks: Vec<(String, bool)> = ui.ctx().data_mut(|d| d.get_temp::<Vec<(String, bool)>>(key)).unwrap_or(values.clone());
@@ -2551,6 +2575,33 @@ fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
                     c.1 = all_new;
                 }
             }
+            // The list's row actions, as the reference UI lays them out: invert the checks, or
+            // filter the column to its repeated / single / keyword-matching values.
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(lang.tr("Invert")).clicked() {
+                    for c in checks.iter_mut() {
+                        c.1 = !c.1;
+                    }
+                }
+                let dup = ui.button(lang.tr("Duplicates"));
+                crate::vip::paint(ui, dup.rect);
+                if dup.clicked() {
+                    let _ = app.run("data.filterDuplicates", json!({"column": col_to_letters(col)}));
+                    close = true;
+                }
+                let uniq = ui.button(lang.tr("Unique Values"));
+                crate::vip::paint(ui, uniq.rect);
+                if uniq.clicked() {
+                    let _ = app.run("data.filterUnique", json!({"column": col_to_letters(col)}));
+                    close = true;
+                }
+                let fuzzy = ui.button(lang.tr("Fuzzy Filter…"));
+                crate::vip::paint(ui, fuzzy.rect);
+                if fuzzy.clicked() {
+                    app.open_dialog("fuzzyFilter", json!({"column": col_to_letters(col)}));
+                    close = true;
+                }
+            });
             egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                 for (v, on) in checks.iter_mut().filter(|(v, _)| matches(v)) {
                     ui.checkbox(on, v.as_str());
