@@ -15,6 +15,7 @@ use crate::IoError;
 use crate::fmla::from_file;
 use crate::package::Rel;
 use crate::read::Ctx;
+use crate::sheet_xml::{CellXml, FormulaXml, RowXml, u32_attr};
 use crate::styles::read_color;
 use crate::tables::{col_width_to_px, paper_name, pt_to_px};
 use crate::xml::{self, El};
@@ -43,8 +44,8 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<Sheet, IoE
     let rels = cx.pkg.rels(part)?;
     let mut sheet = Sheet::new(name);
     let mut st = RowState::default();
-    let res = xml::parse_streaming(&bytes, &["row"], &mut |row| {
-        read_row(cx, &mut sheet, &mut st, &row);
+    let res = crate::sheet_xml::parse_sheet(&bytes, &mut |row| {
+        read_row(cx, &mut sheet, &mut st, row);
         Ok(())
     });
     let root = match res {
@@ -332,7 +333,7 @@ fn read_cols(cx: &Ctx<'_>, e: &El, sheet: &mut Sheet) {
     }
 }
 
-fn read_row(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, row: &El) {
+fn read_row(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, row: &RowXml<'_>) {
     st.rows += 1;
     let r = match row.attr_u32("r") {
         Some(r) if r >= 1 => r - 1,
@@ -367,8 +368,8 @@ fn read_row(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, row: &El) {
         sheet.rows.insert(r, info);
     }
     let mut next_col = 0u32;
-    for c in row.kids("c") {
-        let pos = match c.attr("r") {
+    for c in &row.cells {
+        let pos = match c.r.as_deref() {
             Some(a) => match CellRef::parse(a.trim()) {
                 Some(p) => p,
                 None => {
@@ -387,10 +388,10 @@ fn read_row(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, row: &El) {
     }
 }
 
-fn read_cell(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, c: &El, pos: CellRef) {
-    let style = cx.style(c.attr_u32("s"));
-    let v = c.child("v").map(|v| v.text.as_str());
-    let value = match c.attr("t").unwrap_or("n") {
+fn read_cell(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, c: &CellXml<'_>, pos: CellRef) {
+    let style = cx.style(u32_attr(&c.s));
+    let v = c.v.as_deref();
+    let value = match c.t.as_deref().unwrap_or("n") {
         "s" => match v.and_then(|v| v.trim().parse::<usize>().ok()) {
             Some(i) => match cx.sst.get(i) {
                 Some(s) => Value::Text(s.clone()),
@@ -403,7 +404,10 @@ fn read_cell(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, c: &El, pos
         },
         "str" => v.map(|v| Value::text(xml::decode_xstring(v))).unwrap_or(Value::Empty),
         "inlineStr" => {
-            c.child("is").map(|is| Value::text(xml::rich_text(is))).or_else(|| v.map(|v| Value::text(xml::decode_xstring(v)))).unwrap_or(Value::Empty)
+            c.is.as_ref()
+                .map(|is| Value::text(xml::decode_xstring(is)))
+                .or_else(|| v.map(|v| Value::text(xml::decode_xstring(v))))
+                .unwrap_or(Value::Empty)
         }
         "b" => v.map(|v| Value::Bool(matches!(v.trim(), "1" | "true" | "TRUE"))).unwrap_or(Value::Empty),
         "e" => v.map(|v| Value::Error(CellError::parse(v.trim()).unwrap_or(CellError::Value))).unwrap_or(Value::Empty),
@@ -429,7 +433,7 @@ fn read_cell(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, c: &El, pos
             None => Value::Empty,
         },
     };
-    let picture = c.attr("vm").and_then(|vm| {
+    let picture = c.vm.as_deref().and_then(|vm| {
         if vm == "0" {
             return None;
         }
@@ -440,25 +444,25 @@ fn read_cell(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, c: &El, pos
         picture
     });
     if let Some(picture) = picture {
-        if c.child("f").is_some() {
+        if c.f.is_some() {
             cx.warn("formula-generated cell pictures were imported as static pictures; their formulas were not retained");
         }
         sheet.set_picture(pos, picture);
         sheet.set_style(pos, style);
         return;
     }
-    let dynamic = c.attr("cm").is_some();
-    let formula = c.child("f").and_then(|f| read_formula(cx, st, f, pos, dynamic));
+    let dynamic = c.cm.is_some();
+    let formula = c.f.as_ref().and_then(|f| read_formula(cx, st, f, pos, dynamic));
     let value = if formula.is_none() && st.dynamic.iter().any(|r| r.contains(pos) && r.start != pos) { Value::Empty } else { value };
     sheet.cells.set(pos, Cell { value, formula: formula.map(Arc::new), style });
 }
 
-fn read_formula(cx: &mut Ctx<'_>, st: &mut RowState, f: &El, pos: CellRef, dynamic: bool) -> Option<Formula> {
+fn read_formula(cx: &mut Ctx<'_>, st: &mut RowState, f: &FormulaXml<'_>, pos: CellRef, dynamic: bool) -> Option<Formula> {
     let model = from_file(f.text.trim());
     let text = model.as_str();
-    match f.attr("t").unwrap_or("normal") {
+    match f.t.as_deref().unwrap_or("normal") {
         "shared" => {
-            let si = f.attr_u32("si")?;
+            let si = u32_attr(&f.si)?;
             if !text.is_empty() {
                 let expr = gridcraft_formula::parse(text).ok();
                 st.shared.insert(si, Shared { anchor: pos, expr, text: text.to_string() });
@@ -483,7 +487,7 @@ fn read_formula(cx: &mut Ctx<'_>, st: &mut RowState, f: &El, pos: CellRef, dynam
                 return None;
             }
             let mut fm = Formula::new(text);
-            let range = f.attr("ref").and_then(RangeRef::parse).unwrap_or(RangeRef::cell(pos));
+            let range = f.ref_.as_deref().and_then(RangeRef::parse).unwrap_or(RangeRef::cell(pos));
             if !range.is_single() {
                 st.dynamic.push(range);
             }

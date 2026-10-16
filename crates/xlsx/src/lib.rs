@@ -28,6 +28,7 @@ mod read;
 mod richdata;
 mod sheet_read;
 mod sheet_write;
+mod sheet_xml;
 mod styles;
 mod tables;
 #[cfg(any(test, feature = "test-support"))]
@@ -64,17 +65,33 @@ pub enum IoError {
 }
 
 /// What a lenient read skipped or repaired.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct ReadReport {
     pub warnings: Vec<String>,
+    /// Dedup index for [`ReadReport::warn`]; resynced if `warnings` is mutated directly.
+    seen: std::collections::HashSet<String>,
+}
+
+impl PartialEq for ReadReport {
+    fn eq(&self, other: &Self) -> bool {
+        self.warnings == other.warnings
+    }
 }
 
 impl ReadReport {
     pub(crate) fn warn(&mut self, msg: impl Into<String>) {
         let m = msg.into();
-        if self.warnings.len() < 1000 && !self.warnings.contains(&m) {
-            self.warnings.push(m);
+        if self.warnings.len() >= 1000 {
+            return;
         }
+        if self.seen.len() < self.warnings.len() {
+            self.seen = self.warnings.iter().cloned().collect();
+        }
+        if self.seen.contains(m.as_str()) {
+            return;
+        }
+        self.seen.insert(m.clone());
+        self.warnings.push(m);
     }
 }
 

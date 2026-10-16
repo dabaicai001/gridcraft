@@ -117,7 +117,7 @@ fn local(name: &[u8]) -> String {
     String::from_utf8_lossy(n).into_owned()
 }
 
-fn start_el(e: &BytesStart<'_>) -> El {
+pub(crate) fn start_el(e: &BytesStart<'_>) -> El {
     let mut el = El { name: local(e.name().as_ref()), ..Default::default() };
     for a in e.attributes().with_checks(false).flatten() {
         let key = a.key.as_ref();
@@ -143,6 +143,25 @@ fn named_entity(name: &str) -> Option<char> {
         "apos" => '\'',
         _ => return None,
     })
+}
+
+/// Appends a general entity/character reference to `text` (`&amp;` → `&`; unknown references are
+/// kept verbatim). Shared by the tree reader and the streaming worksheet reader.
+pub(crate) fn push_ref(text: &mut String, r: &quick_xml::events::BytesRef<'_>) {
+    match r.resolve_char_ref() {
+        Ok(Some(c)) => text.push(c),
+        _ => {
+            let name = String::from_utf8_lossy(r);
+            match named_entity(&name) {
+                Some(c) => text.push(c),
+                None => {
+                    text.push('&');
+                    text.push_str(&name);
+                    text.push(';');
+                }
+            }
+        }
+    }
 }
 
 /// Parses a whole part into a tree.
@@ -215,20 +234,7 @@ pub fn parse_streaming(xml: &[u8], split: &[&str], cb: &mut dyn FnMut(El) -> Res
             }
             Event::GeneralRef(r) => {
                 if let Some(top) = stack.last_mut() {
-                    match r.resolve_char_ref() {
-                        Ok(Some(c)) => top.text.push(c),
-                        _ => {
-                            let name = String::from_utf8_lossy(&r).into_owned();
-                            match named_entity(&name) {
-                                Some(c) => top.text.push(c),
-                                None => {
-                                    top.text.push('&');
-                                    top.text.push_str(&name);
-                                    top.text.push(';');
-                                }
-                            }
-                        }
-                    }
+                    push_ref(&mut top.text, &r);
                 }
             }
             Event::Eof => break,
