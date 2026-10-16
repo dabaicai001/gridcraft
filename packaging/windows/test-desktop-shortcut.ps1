@@ -16,12 +16,12 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows' -or $env:RUN
 }
 if (-not $WorkDir) { $WorkDir = Join-Path $env:RUNNER_TEMP 'gridcraft-shortcut-smoke' }
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$InstallDir = Join-Path $env:ProgramFiles 'GridCraft'
-$DesktopLink = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'GridCraft.lnk'
-$StartLink = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'GridCraft.lnk'
-$ChoiceKey = 'HKLM:\Software\GridCraft\Installer'
-$ComponentKey = 'HKLM:\Software\GridCraft\Installer'
-$UninstallRoot = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+$InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\GridCraft'
+$DesktopLink = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'GridCraft.lnk'
+$StartLink = Join-Path ([Environment]::GetFolderPath('Programs')) 'GridCraft.lnk'
+$ChoiceKey = 'HKCU:\Software\GridCraft\Installer'
+$ComponentKey = 'HKCU:\Software\GridCraft\Installer'
+$UninstallRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 $Icon = Join-Path $Root 'assets\app-icon\gridcraft.ico'
 if ((Test-Path $InstallDir) -or (Test-Path $DesktopLink) -or (Test-Path $StartLink) -or
     (Test-Path 'HKLM:\Software\GridCraft') -or (Test-Path 'HKCU:\Software\GridCraft')) {
@@ -94,8 +94,7 @@ function Assert-Package($Package) {
 function Assert-Desktop([bool] $Enabled) {
   Assert-That ((Test-Path $DesktopLink) -eq $Enabled) "Desktop shortcut presence should be $Enabled"
   $marker = Get-OptionalRegistryValue $ComponentKey 'DesktopShortcutComponent'
-  Assert-That (($null -ne $marker) -eq $Enabled) 'Shortcut component marker must match the machine-wide shortcut'
-  Assert-That ($null -eq (Get-OptionalRegistryValue 'HKCU:\Software\GridCraft\Installer' 'DesktopShortcutComponent')) 'Shortcut component must not leave a per-user marker'
+  Assert-That (($null -ne $marker) -eq $Enabled) 'Shortcut component marker must match the per-user shortcut'
   $choice = Get-ItemPropertyValue -Path $ChoiceKey -Name DesktopShortcut
   Assert-That ($choice -eq $(if ($Enabled) { '1' } else { '0' })) 'Installer did not persist the selected desktop choice'
   if (-not $Enabled) { return }
@@ -124,39 +123,6 @@ function Assert-Removed($Package) {
   Assert-That (-not (Test-Path $StartLink)) 'Start Menu shortcut remains after uninstall'
   Assert-That ($null -eq (Get-OptionalRegistryValue $ChoiceKey 'DesktopShortcut')) 'Saved choice remains after uninstall'
   Assert-That ($null -eq (Get-OptionalRegistryValue $ComponentKey 'DesktopShortcutComponent')) 'Shortcut component registration remains after uninstall'
-}
-
-function Uninstall-AsSystem($Package) {
-  # Exercise removal under a different account without creating a user or credentials.
-  # This function is covered by the disposable hosted-runner guard at the top of the script.
-  $taskName = 'GridCraft-shortcut-' + [Guid]::NewGuid().ToString('N')
-  $log = Join-Path $WorkDir 'uninstall-as-system.log'
-  $action = New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\msiexec.exe') `
-    -Argument "/x $($Package.Code) /qn /norestart /l*v `"$log`""
-  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
-  try {
-    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
-    $started = Get-Date
-    Start-ScheduledTask -TaskName $taskName
-    $deadline = $started.AddMinutes(2)
-    do {
-      Start-Sleep -Milliseconds 250
-      $task = Get-ScheduledTask -TaskName $taskName
-      $info = Get-ScheduledTaskInfo -TaskName $taskName
-      if ($info.LastRunTime -ge $started.AddSeconds(-1) -and $task.State -ne 'Running' -and $info.LastTaskResult -ne 267009) {
-        Assert-That ($info.LastTaskResult -eq 0) "Cross-account uninstall failed with $($info.LastTaskResult); see $log"
-        Write-Host 'ok uninstall-as-system'
-        return
-      }
-    } while ((Get-Date) -lt $deadline)
-    throw "Cross-account uninstall exceeded two minutes; see $log"
-  } finally {
-    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-      Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-      Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-    }
-  }
 }
 
 # Original fixture source, compiled by the .NET Framework compiler already on the runner.
@@ -211,11 +177,6 @@ try {
   Assert-Desktop $false
   Invoke-Msi 'uninstall-after-opt-out' @('/x', $third.Code)
   Assert-Removed $third
-
-  Invoke-Msi 'cross-account-install' @('/i', "`"$($first.Path)`"", 'DESKTOPSHORTCUT=1')
-  Assert-Desktop $true
-  Uninstall-AsSystem $first
-  Assert-Removed $first
 } catch {
   $failure = $_
 } finally {
@@ -231,4 +192,4 @@ try {
   }
 }
 if ($failure) { throw $failure }
-Write-Host 'Desktop shortcut smoke passed: default off, explicit on/off, repair, upgrade persistence and cross-account uninstall.'
+Write-Host 'Desktop shortcut smoke passed: default off, explicit on/off, repair, upgrade persistence and uninstall cleanup.'

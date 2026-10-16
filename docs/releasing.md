@@ -122,22 +122,25 @@ open dist/release/gridcraft-*-macos-*.dmg
 is GUI, `gridcraft-cli.exe` console), signs both executables, builds the MSI with WiX v5, signs
 the MSI, and zips a portable build.
 
-- `gridcraft.wxs`: per-machine install into Program Files, advertised Start Menu shortcut, App
+- `gridcraft.wxs`: per-user install into `%LOCALAPPDATA%\Programs` (no admin elevation),
+  advertised Start Menu shortcut, App
   Paths (Win+R `gridcraft`). File types: ProgIds `GridCraft.Workbook` (`.xlsx`, `.xlsm`) and
   `GridCraft.TextData` (`.csv`, `.tsv`), listed under each extension's `OpenWithProgids` and
-  in `Capabilities` + `RegisteredApplications`, so GridCraft appears in *Open with* and
+  in `Capabilities` + `RegisteredApplications` (all under `HKCU`), so GridCraft appears in
+  *Open with* and
   *Settings › Default apps* but never silently becomes the default. The MSI version is the
-  numeric `X.Y.Z`; same-version upgrades let release candidates replace each other.
+  numeric `X.Y.Z`; same-version upgrades let release candidates replace each other. Note:
+  per-user and per-machine MSIs live in different installation contexts, so a per-user
+  package does not upgrade a per-machine one (or vice versa) even with the same UpgradeCode.
 - **Desktop shortcut:** full installer UI offers an unchecked checkbox on a new installation.
   Unattended installs can use `msiexec /i gridcraft.msi /qn DESKTOPSHORTCUT=1` to opt in
-  (or `DESKTOPSHORTCUT=0` to opt out). The choice is stored per machine and reused on upgrades;
+  (or `DESKTOPSHORTCUT=0` to opt out). The choice is stored per user and reused on upgrades;
   repair retains the installed component choice, and uninstall removes the managed shortcut.
   The Start Menu shortcut is always installed. Run
   the Packaging lint workflow’s Windows job to build small fixture installers and check
-  installation, repair, upgrade, opt-out and cleanup, including removal by SYSTEM after
-  installation by the runner account. The shortcut marker uses `HKMU`, which resolves to
-  `HKLM` for this per-machine package; it leaves no installing-user registry marker. Unlike
-  a literal `HKLM` key path, MSI registry root -1 also meets ICE43's shortcut rule without
+  installation, repair, upgrade, opt-out and cleanup. The shortcut marker uses `HKMU`, which resolves to
+  `HKCU` for this per-user package. Unlike
+  a literal `HKCU` key path, MSI registry root -1 also meets ICE43's shortcut rule without
   suppressing validation ([WiX registry roots](https://docs.firegiant.com/wix/schema/wxs/registryvalue/),
   [ICE43](https://learn.microsoft.com/windows/win32/msi/ice43)). Its
   `packaging/windows/test-desktop-shortcut.ps1` script requires a GitHub-hosted Windows runner.
