@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (merge of upstream `main`, 421 commits to v0.7.0) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-19 · **Last updated:** 2026-10-19 · **Change:** minor (merge of upstream `main` to v0.8.0; conflict policy recorded in AGENTS.md) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -196,6 +196,8 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-19 | minor | Merge of upstream `main` to v0.8.0 (9 commits: conditional-format number formats #1163, ChromeOS font probing #1762, pivot value-func validation #1757, control-channel input #1782, median overflow fix #1585); AGENTS.md records the conflict policy — upstream first, with a bug review before dropping anything |
+| 2026-10-19 | minor | The filter popup opens above the header when the value list would not fit below it (it only clamped the top before, so a header near the bottom of a short window lost the list) |
 | 2026-10-16 | minor | Merge of upstream `main` (421 commits to v0.7.0) into this fork; Serbian language table |
 | 2026-10-16 | minor | Filter list: Duplicates / Unique Values / Fuzzy Filter; sort from the popup keeps the title row; dialogs auto-sized; membership marker; zh covers every dialog |
 | 2026-10-15 | minor | Ten data tools from WPS's paid tier (compare/split/merge sheets, sheet index, invert selection, fill blanks, batch text insert, rank, conditional statistics, quick filter); CSV keeps General numbers at full precision; progress log row |

@@ -40,6 +40,30 @@ People trust GridCraft with their numbers; a crash loses their work. **This outr
 - **Rust only** (no handwritten JS/TS). **Never break wasm** (`cargo xtask wasm`).
 - **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, assets, layers, wasm). One task id per commit (`M2.1: borders gallery`).
 
+## Syncing with upstream (`storytold/gridcraft`)
+
+This repo is a fork of `storytold/gridcraft`; `origin` is the fork's own remote. When catching up
+(`git fetch https://github.com/storytold/gridcraft.git main` then merge), resolve every conflict
+**upstream first** — the same rule whether the two sides implement the same feature or fix the same
+bug two different ways. Upstream is the maintained line: its code, its wording in the translation
+tables, its tests. Concretely:
+
+- Take upstream's file content as the base; only re-apply what upstream genuinely lacks.
+- Drop this fork's patch as soon as upstream fixes the same thing (a duplicate fix is deleted, not
+  kept "just in case").
+- Where both sides translate the same key, upstream's wording wins (its tests assert it).
+- **But review before you drop anything.** Upstream-first is not blind: if this fork's version fixes
+  a bug upstream's still has (wrong output, a crash, a layout that degenerates, a mis-keyed
+  translation table), keep ours and say so in the commit message — or fix the bug in upstream's
+  version and take that. Past examples found this way: a fork translation table whose values were
+  attached to the wrong keys, a `format!` that rendered "Show as Show as …", and a reply row whose
+  field width guess made a pane grow every frame.
+- Keep this fork's own additions (features and languages upstream does not have) on top; they are
+  not conflicts. Where upstream later implements the same feature, drop ours and take theirs.
+
+Record the merge-base and the conflict decisions in the merge commit message, and update the
+affected docs (`ROADMAP.md` progress log, the area parity doc) with a row for the merge.
+
 ## Running and looking at the app
 - `cargo run --release -p gridcraft -- --sample sales --control 7979` (sample workbook + control channel).
 - Drive it: JSON lines on `127.0.0.1:7979`, e.g. `{"id":1,"method":"engine.execute","params":{"command":"cell.set","params":{"cell":"B2","input":"=SUM(A1:A9)"}}}` then `{"id":2,"method":"ui.screenshot","params":{"path":"/tmp/shot.png"}}`. Methods: `crates/ui-egui/src/control.rs`, docs: `docs/control-protocol.md`.

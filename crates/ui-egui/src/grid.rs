@@ -482,6 +482,10 @@ fn look(wb: &Workbook, si: usize, sh: &Sheet, c: CellRef, cf: &mut CfCache) -> (
         if st.font.strike {
             style.font.strike = true;
         }
+        // In a differential style General means "not set" (#1163).
+        if st.num_fmt.as_str() != "General" {
+            style.num_fmt = st.num_fmt.clone();
+        }
         for (dst, src) in [
             (&mut style.borders.left, st.borders.left),
             (&mut style.borders.right, st.borders.right),
@@ -2784,12 +2788,19 @@ fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
     let enter = !on_button && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
     let mut close = false;
     // The popup opens left of the header it belongs to, and flips to its right when there is no
-    // room (a column near the left edge would otherwise push it off-screen), as Excel does. Its
-    // top is kept on screen for a header near the bottom.
+    // room (a column near the left edge would otherwise push it off-screen), as Excel does.
+    // Vertically it opens below the header, or above it when the list would not fit under it.
     let screen = ui.ctx().content_rect();
     let width = 230.0;
-    let x = if at.x - width - 10.0 >= screen.left() { at.x - width - 10.0 } else { (at.x + 24.0).min(screen.right() - width - 4.0) };
-    let y = (at.y + 10.0).min((screen.bottom() - 240.0).max(screen.top() + 4.0));
+    // Upper bound of the popup's height: the value list's scroll area plus its own chrome.
+    let height = 380.0;
+    let x = if at.x - width - 10.0 >= screen.left() {
+        at.x - width - 10.0
+    } else {
+        (at.x + 24.0).clamp(screen.left(), (screen.right() - width - 4.0).max(screen.left()))
+    };
+    let below = at.y + 10.0;
+    let y = if below + height <= screen.bottom() { below } else { (at.y - height - 10.0).max(screen.top() + 4.0) };
     let area = egui::Area::new(egui::Id::new("filter_menu")).fixed_pos(pos2(x, y)).order(egui::Order::Foreground);
     let response = area.show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
@@ -3460,6 +3471,28 @@ mod tests {
         assert_eq!(center_across_end(0, 20, |c| c <= 2), 2);
         assert_eq!(center_across_end(0, 20, |_| false), 0);
         assert_eq!(center_across_end(0, 1, |_| true), 1);
+    }
+
+    #[test]
+    fn conditional_number_format_reaches_the_cell_text() {
+        // #1163: a rule's number format replaces the cell's own; unmatched cells keep theirs.
+        let mut session = gridcraft_engine::Session::new();
+        session.new_workbook();
+        session.execute("range.setValues", json!({"range": "A1", "values": [[1], [3], [4]]})).unwrap();
+        session.execute("home.numberFormat", json!({"range": "A3", "code": "0.0"})).unwrap();
+        let rule = json!({"type": "cellIs", "operator": "greater", "value": "2", "style": {"num_fmt": "0.00"}});
+        session.execute("home.conditionalFormat", json!({"range": "A1:A3", "rule": rule})).unwrap();
+        let wb = session.active().unwrap().wb.clone();
+        let sh = wb.sheet(0).unwrap();
+        let mut cf = CfCache::new();
+        let text = |row: u32, cf: &mut CfCache| {
+            let c = CellRef::new(row, 0);
+            let (lk, _) = look(&wb, 0, sh, c, cf);
+            display_text(&wb, sh, c, &sh.value(c), &lk.style, 200.0, 7.0).0
+        };
+        assert_eq!(text(0, &mut cf), "1");
+        assert_eq!(text(1, &mut cf), "3.00");
+        assert_eq!(text(2, &mut cf), "4.00");
     }
 
     #[test]
